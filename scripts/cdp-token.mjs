@@ -95,10 +95,16 @@ async function run() {
   ws.close();
   let parsed = {};
   try { parsed = JSON.parse(res?.result?.value || '{}'); } catch { parsed = {}; }
-  const tokens = (parsed.entries || [])
+  const usable = (parsed.entries || [])
+    .filter((e) => !/^__|beacon|gtag|ga_|sentry/i.test(e.key))
     .filter((e) => pickToken(e.key, e.value))
-    .map((e) => ({ kind: classify(e.key), storage: e.storage, key: e.key, value: e.value }));
-  return { ok: tokens.length > 0, origin: parsed.origin, href: parsed.href, count: tokens.length, tokens };
+    .map((e) => ({ kind: classify(e.key), storage: e.storage, key: e.key, value: e.value }))
+    .filter((e) => e.kind !== 'other');
+  const onLoginPage = /\/login|\/auth|signin|sso/i.test(parsed.href || '');
+  const reason = usable.length ? null
+    : (onLoginPage ? 'still on login page - finish login first' : 'no usable token in storage');
+  return { ok: usable.length > 0, origin: parsed.origin, href: parsed.href,
+           count: usable.length, tokens: usable, reason, login_page: onLoginPage };
 }
 
 try {

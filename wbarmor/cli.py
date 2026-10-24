@@ -226,7 +226,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stdout.reconfigure(errors="replace")  # 保持控制台编码（中文 Windows=GBK），只把不可编码字符替换掉
     except Exception:
         pass
     args = build_parser().parse_args(argv)
