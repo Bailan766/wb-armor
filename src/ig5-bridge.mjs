@@ -72,6 +72,8 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && p === '/health') return json(res, 200, {
       ok: true, upstream: UP, payload_chars: PAYLOAD.length,
+      payload_source: process.env.IG5_PAYLOAD ? 'env' : (PAYLOAD_PATH.includes('vendor') ? 'bundled' : 'file'),
+      payload_path: PAYLOAD_PATH,
       served: STATS.served, fallbacks: STATS.fallbacks,
       last_model: STATS.lastModel, last_status: STATS.lastStatus,
       recent: LOG.slice(-10)

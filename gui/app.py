@@ -99,6 +99,7 @@ class App(tk.Tk):
         ttk.Entry(pl, textvariable=self.payload_var).pack(side="left", fill="x", expand=True, padx=6)
         ttk.Button(pl, text="浏览", width=6, command=self.pick_payload).pack(side="left", padx=2)
         ttk.Button(pl, text="设为载荷", width=10, command=self.do_set_payload).pack(side="left")
+        ttk.Button(pl, text="用内置", width=8, command=self.do_reset_payload).pack(side="left", padx=4)
         self.payload_state = ttk.Label(pl, text="", width=26)
         self.payload_state.pack(side="left", padx=(8, 0))
 
@@ -322,6 +323,12 @@ class App(tk.Tk):
 
     def do_set_payload(self) -> None:
         ok, msg = core.set_payload(self.payload_var.get().strip())
+        self.say(("OK " if ok else "FAIL ") + msg)
+        if ok:
+            self.refresh_payload()
+
+    def do_reset_payload(self) -> None:
+        ok, msg = core.reset_payload()
         self.say(("OK " if ok else "FAIL ") + msg)
         if ok:
             self.refresh_payload()

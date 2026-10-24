@@ -54,6 +54,10 @@ def cmd_inject(a) -> int:
 def cmd_models(a) -> int:
     items = core.models_from_bridge()
     cur = core.default_model()
+    if a.bundled:
+        ok, msg = core.reset_payload()
+        print(("OK " if ok else "FAIL ") + msg)
+        return 0 if ok else 1
     if a.set:
         ok, msg = core.set_default_model(a.set)
         print(("OK " if ok else "FAIL ") + msg)
@@ -103,6 +107,10 @@ def cmd_probe(_a) -> int:
 
 
 def cmd_payload(a) -> int:
+    if a.bundled:
+        ok, msg = core.reset_payload()
+        print(("OK " if ok else "FAIL ") + msg)
+        return 0 if ok else 1
     if a.set:
         ok, msg = core.set_payload(a.set)
         print(("OK " if ok else "FAIL ") + msg)
@@ -193,6 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     pl = sub.add_parser("payload")
     pl.add_argument("--set", default="")
+    pl.add_argument("--bundled", action="store_true")
     pl.set_defaults(fn=cmd_payload)
 
     lg = sub.add_parser("logs")
