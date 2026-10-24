@@ -1,4 +1,4 @@
-param([switch]$SkipExe)
+﻿param([switch]$SkipExe)
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 if (-not (Test-Path (Join-Path $Root 'package.json'))) { $Root = $PSScriptRoot }
@@ -38,8 +38,8 @@ $notesLines = @(
   'Install:',
   '  1) unzip to any ASCII path',
   '  2) requires Python 3.10+, Node 18+, opencode CLI',
-  '  3) first run: .\wbarmor.ps1 setup -Dsh',
-  '  4) start: 启动.cmd  or  .\wbarmor.ps1 gui',
+  '  3) first run: python -m wbarmor deploy-codex   (and deploy-dsh for DSH)',
+  '  4) start: 启动.cmd  (or python -m wbarmor start)',
   '',
   'Fixes in 1.0.1:',
   '  - launcher recursion + wrong paths (gui/selftest.py, start-all.ps1)',

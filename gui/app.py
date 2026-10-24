@@ -8,6 +8,7 @@ import os
 import queue
 import subprocess
 import sys
+import time
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -61,6 +62,8 @@ class App(tk.Tk):
             ("① 提 Token", 12, self.do_token),
             ("↻ 刷新 Token", 12, self.do_refresh_token),
             ("② 注入 Token", 12, self.do_inject),
+            ("浏览器登录", 11, self.do_browser_login),
+            ("抓取并注入", 11, self.do_capture_token),
             ("③ 部署 Codex", 13, lambda: self.bg(core.deploy_codex)),
             ("④ 部署 DSH", 12, lambda: self.bg(core.deploy_dsh)),
             ("同步模型目录", 13, self.do_sync_catalog),
@@ -274,6 +277,35 @@ class App(tk.Tk):
         if ok:
             self.token_var.set("")
         self.refresh_status()
+
+    def do_browser_login(self) -> None:
+        def work():
+            return core.open_login_browser()
+        self.bg(work)
+
+    def do_capture_token(self) -> None:
+        def work():
+            lines = []
+            if not core.cdp_ready(core.CDP_PORT):
+                lines += core.open_login_browser()
+                for _ in range(30):
+                    if core.cdp_ready(core.CDP_PORT):
+                        break
+                    time.sleep(1)
+            res = core.capture_tokens()
+            if not res.get("ok"):
+                lines.append("抓取失败: %s (%s)" % (res.get("reason") or "no token", res.get("href") or "?"))
+                return lines
+            lines.append("抓到 %d 条，origin=%s" % (res.get("count", 0), res.get("origin")))
+            for t in res.get("tokens", []):
+                v = t.get("value") or ""
+                lines.append("  [%s] %s:%s len=%d %s" % (t.get("kind"), t.get("storage"), t.get("key"), len(v), core.mask(v, 8)))
+            ok, saved = core.save_browser_tokens(res.get("tokens", []))
+            lines.append(("写入 session OK: " if ok else "写入失败: ") + "; ".join(saved))
+            if ok:
+                self.after(300, self.refresh_status)
+            return lines
+        self.bg(work)
 
     def do_sync_catalog(self) -> None:
         def work():

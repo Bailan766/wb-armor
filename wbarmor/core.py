@@ -278,14 +278,55 @@ def _ps(script: str, *args: str) -> subprocess.CompletedProcess:
 
 
 def start_all() -> tuple[bool, str]:
-    p = _ps(str(ROOT / "scripts" / "start-all.ps1"))
-    ok = all(port_up(int(x)) for x in PORTS if x != "8788") and http_ok(BRIDGE + "/health")
-    return ok, (p.stdout or "") + (p.stderr or "")
+    """启动全链路。子进程输出写文件而不是管道 —— 否则被拉起的常驻服务会继承管道句柄，Python 侧永不返回。"""
+    LOGS.mkdir(parents=True, exist_ok=True)
+    out_path = LOGS / "start-all.out.log"
+    err_path = LOGS / "start-all.err.log"
+    with open(out_path, "w", encoding="utf-8", errors="replace") as fo, open(err_path, "w", encoding="utf-8", errors="replace") as fe:
+        subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ROOT / "scripts" / "start-all.ps1")],
+                       cwd=str(ROOT), stdout=fo, stderr=fe, timeout=240)
+    text = (out_path.read_text(encoding="utf-8", errors="replace") + err_path.read_text(encoding="utf-8", errors="replace")).strip()
+    ok = all(port_up(int(x)) for x in PORTS) and http_ok(BRIDGE + "/health")
+    return ok, text
+
+
+def _kill_port(port: int) -> str:
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                              "(Get-NetTCPConnection -LocalPort %d -State Listen -ErrorAction SilentlyContinue).OwningProcess" % port],
+                             capture_output=True, text=True, timeout=20).stdout
+        pids = [p for p in out.split() if p.isdigit()]
+        killed = []
+        for pid in pids:
+            r = subprocess.run(["taskkill", "/PID", pid, "/F"], capture_output=True, text=True)
+            if r.returncode == 0:
+                killed.append(pid)
+        return ("killed port %d pid %s" % (port, ",".join(killed))) if killed else ""
+    except Exception as e:  # noqa: BLE001
+        return "port %d: %s" % (port, e)
 
 
 def stop_all() -> tuple[bool, str]:
-    p = _ps(str(ROOT / "wbarmor.ps1"), "down")
-    return True, (p.stdout or "") + (p.stderr or "")
+    lines = []
+    for name in TASKS:
+        subprocess.run(["schtasks", "/End", "/TN", name], capture_output=True, text=True)
+    lines.append("schtasks /End x%d" % len(TASKS))
+    for p in PORTS:
+        msg = _kill_port(int(p))
+        if msg:
+            lines.append(msg)
+    for name in TASKS:
+        if schtasks_running(name):
+            lines.append("WARN %s still running" % name)
+    return True, "\n".join(lines) or "nothing to stop"
+
+
+def schtasks_running(name: str) -> bool:
+    try:
+        out = subprocess.run(["schtasks", "/Query", "/TN", name, "/FO", "LIST"], capture_output=True, text=True).stdout
+        return "Running" in out or "正在运行" in out
+    except Exception:
+        return False
 
 
 def status() -> dict:
@@ -532,3 +573,107 @@ def tasks_remove() -> list[str]:
         p = subprocess.run(["schtasks", "/Delete", "/TN", name, "/F"], capture_output=True, text=True)
         out.append("%-14s %s" % (name, "deleted" if p.returncode == 0 else "absent"))
     return out
+
+# ---------------------------------------------------------------- browser token capture (CDP)
+BROWSER_PROFILE = ROOT / "browser-profile"
+CDP_PORT = int(os.environ.get("WB_CDP_PORT", "9222"))
+LOGIN_URL = os.environ.get("WB_LOGIN_URL", "https://www.workbuddy.ai")
+
+
+def find_browser() -> str:
+    cands = [
+        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Google", "Chrome", "Application", "chrome.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Google", "Chrome", "Application", "chrome.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
+        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Microsoft", "Edge", "Application", "msedge.exe"),
+    ]
+    for c in cands:
+        if c and os.path.exists(c):
+            return c
+    return ""
+
+
+def cdp_ready(port: int) -> bool:
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:%d/json/version" % port, timeout=0.8) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def open_login_browser(wait: float = 20.0) -> list[str]:
+    """用独立 profile 开一个带调试端口的浏览器窗口，等待 CDP 就绪。"""
+    exe = find_browser()
+    if not exe:
+        return ["没有找到 Chrome/Edge：请先安装 Chrome 或 Edge"]
+    BROWSER_PROFILE.mkdir(parents=True, exist_ok=True)
+    args = [
+        exe,
+        "--remote-debugging-port=%d" % CDP_PORT,
+        "--user-data-dir=%s" % str(BROWSER_PROFILE),
+        "--no-first-run", "--no-default-browser-check",
+        "--new-window", LOGIN_URL,
+    ]
+    subprocess.Popen(args, close_fds=True)
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        if cdp_ready(CDP_PORT):
+            return ["browser opened (%s) cdp=127.0.0.1:%d" % (os.path.basename(exe), CDP_PORT),
+                    "请在窗口里登录 %s，登录完成后点「抓取」" % LOGIN_URL]
+        time.sleep(0.5)
+    return ["browser launched but CDP not ready on %d (另一个实例占用了该端口？)" % CDP_PORT]
+
+
+def capture_tokens(timeout: float = 25.0) -> dict:
+    """调用 scripts/cdp-token.mjs 从已登录页面抓 token。"""
+    node = (subprocess.run(["where", "node"], capture_output=True, text=True).stdout.splitlines() or [""])[0].strip()
+    if not node:
+        return {"ok": False, "reason": "node 不在 PATH"}
+    script = ROOT / "scripts" / "cdp-token.mjs"
+    if not script.exists():
+        return {"ok": False, "reason": "缺少 scripts/cdp-token.mjs"}
+    p = subprocess.run([node, str(script), "--json", "--port=%d" % CDP_PORT],
+                       capture_output=True, text=True, timeout=timeout)
+    out = (p.stdout or "").strip().splitlines()
+    for line in reversed(out):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                data = json.loads(line)
+            except Exception:
+                continue
+            if not data.get("ok") and not data.get("reason"):
+                data["reason"] = "页面已连上，但 localStorage/sessionStorage 里没有 token（未登录？）"
+            return data
+    return {"ok": False, "reason": ((p.stdout or "") + (p.stderr or "")).strip()[:300] or "no output"}
+
+
+def save_browser_tokens(tokens: list[dict]) -> tuple[bool, list[str]]:
+    """把抓到的 token 写进 session：access/refresh/device 分键存放，其余忽略。"""
+    sess = _read_session()
+    auth = sess.setdefault("auth", {}) if isinstance(sess.get("auth", {}), dict) else {}
+    sess["auth"] = auth
+    taken = []
+    for t in tokens:
+        val = (t.get("value") or "").strip()
+        if not val:
+            continue
+        kind = t.get("kind")
+        if kind == "refresh":
+            auth["refreshToken"] = val
+            taken.append("refreshToken len=%d" % len(val))
+        elif kind == "device":
+            auth["deviceToken"] = val
+            taken.append("deviceToken len=%d" % len(val))
+        elif kind == "access":
+            auth["accessToken"] = val
+            taken.append("accessToken len=%d" % len(val))
+    if not taken:
+        return False, ["抓到的条目里没有可识别的 token"]
+    SESSION.parent.mkdir(parents=True, exist_ok=True)
+    SESSION.write_text(json.dumps(sess, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        os.chmod(SESSION, 0o600)
+    except Exception:
+        pass
+    return True, taken

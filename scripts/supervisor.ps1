@@ -1,3 +1,4 @@
+﻿function Q([string]$s) { if ($s -match '\s') { return '"' + $s + '"' } return $s }
 # supervisor: ensure 8788 / 4097 / 8792 / 8790 are listening; start missing ones
 $Root = Split-Path -Parent $PSScriptRoot
 $GW = Join-Path $Root 'gw\workbuddy2api'
@@ -15,8 +16,8 @@ $ts = (Get-Date).ToUniversalTime().ToString("o"); '{"ts":"' + $ts + '","level":"
 if (-not (Test-Port 8788) -and (Test-Path $Py)) {
   Start-Process -FilePath $Py -WorkingDirectory (Join-Path $GW 'server') -WindowStyle Hidden -ArgumentList @(
     'codebuddy_proxy.py', '--port', '8788', '--endpoint', 'https://www.workbuddy.ai',
-    '--platform', 'workbuddy-ai', '--session-file', (Join-Path $env:USERPROFILE '.workbuddy-ai-session.json'),
-    '--log-file', (Join-Path $GW 'logs\proxy-intl.jsonl'))
+    '--platform', 'workbuddy-ai', '--session-file', (Q (Join-Path $env:USERPROFILE '.workbuddy-ai-session.json')),
+    '--log-file', (Q (Join-Path $GW 'logs\proxy-intl.jsonl')))
   '{"ts":"' + (Get-Date).ToUniversalTime().ToString("o") + '","level":"warn","comp":"supervisor","msg":"start","svc":"8788"}' | Add-Content -Path $Log
 }
 
@@ -27,13 +28,13 @@ if (-not (Test-Port 4097)) {
 }
 
 if (-not (Test-Port 8792)) {
-  Start-Process -FilePath 'node' -WindowStyle Hidden -ArgumentList (Join-Path $Root 'src\opencode-bridge.mjs')
+  Start-Process -FilePath 'node' -WindowStyle Hidden -ArgumentList (Q (Join-Path $Root 'src\opencode-bridge.mjs'))
   '{"ts":"' + (Get-Date).ToUniversalTime().ToString("o") + '","level":"warn","comp":"supervisor","msg":"start","svc":"8792"}' | Add-Content -Path $Log
 }
 
 if (-not (Test-Port 8790)) {
   $env:IG5_DEBUG = '1'
-  Start-Process -FilePath 'node' -WindowStyle Hidden -ArgumentList (Join-Path $Root 'src\ig5-bridge.mjs')
+  Start-Process -FilePath 'node' -WindowStyle Hidden -ArgumentList (Q (Join-Path $Root 'src\ig5-bridge.mjs'))
   '{"ts":"' + (Get-Date).ToUniversalTime().ToString("o") + '","level":"warn","comp":"supervisor","msg":"start","svc":"8790"}' | Add-Content -Path $Log
 }
 

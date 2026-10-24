@@ -24,3 +24,6 @@ gw/workbuddy2api/__pycache__/
 # ---- os ----
 Thumbs.db
 .DS_Store
+
+browser-profile/
+logs/

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 
 from . import core
 
@@ -124,6 +125,33 @@ def cmd_tasks(a) -> int:
     return 0
 
 
+def cmd_token_browser(a) -> int:
+    if not core.cdp_ready(core.CDP_PORT):
+        for line in core.open_login_browser():
+            print(line)
+        if not a.capture:
+            print("登录完成后重跑： python -m wbarmor token-browser --capture" + (" --inject" if a.inject else ""))
+            return 0
+        for _ in range(30):
+            if core.cdp_ready(core.CDP_PORT):
+                break
+            time.sleep(1)
+    res = core.capture_tokens()
+    if not res.get("ok"):
+        print("CAPTURE fail: %s (href=%s)" % (res.get("reason") or "no token", res.get("href") or "?"))
+        return 1
+    print("CAPTURE ok origin=%s tokens=%d" % (res.get("origin"), res.get("count", 0)))
+    for t in res.get("tokens", []):
+        v = t.get("value") or ""
+        print("  [%s] %s:%s len=%d head=%s" % (t.get("kind"), t.get("storage"), t.get("key"), len(v), core.mask(v, 8)))
+    if a.inject:
+        ok, lines = core.save_browser_tokens(res.get("tokens", []))
+        print(("INJECT ok " if ok else "INJECT fail ") + "; ".join(lines))
+        return 0 if ok else 1
+    print("提示：加 --inject 可写入 session（auth.accessToken / deviceToken / refreshToken）")
+    return 0
+
+
 def cmd_open(a) -> int:
     for line in core.open_client(a.who):
         print(line)
@@ -175,6 +203,11 @@ def build_parser() -> argparse.ArgumentParser:
     tk = sub.add_parser("tasks")
     tk.add_argument("action", choices=["status", "install", "remove"], nargs="?", default="status")
     tk.set_defaults(fn=cmd_tasks)
+
+    tb = sub.add_parser("token-browser")
+    tb.add_argument("--capture", action="store_true")
+    tb.add_argument("--inject", action="store_true")
+    tb.set_defaults(fn=cmd_token_browser)
 
     o = sub.add_parser("open")
     o.add_argument("who", choices=["codex", "dsh"])

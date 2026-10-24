@@ -1,7 +1,9 @@
-# start-all.ps1 - bring up 8788 (proxy) -> 4097 (opencode serve) -> 8792 (free shim) -> 8790 (IG5 bridge)
+﻿# start-all.ps1 - bring up 8788 (proxy) -> 4097 (opencode serve) -> 8792 (free shim) -> 8790 (IG5 bridge)
 # Every attempt writes JSONL into logs\launcher.log and per-service stdout/stderr into logs\<port>.out.log|.err.log
 
 $ErrorActionPreference = 'SilentlyContinue'
+function Q([string]$s) { if ($s -match '\s') { return '"' + $s + '"' } return $s }
+
 
 $R = Split-Path -Parent $PSScriptRoot
 $GW = Join-Path $R 'gw\workbuddy2api'
@@ -41,8 +43,8 @@ if (-not (Up 8788) -and (Test-Path $PY)) {
     'codebuddy_proxy.py', '--port', '8788',
     '--endpoint', 'https://www.workbuddy.ai',
     '--platform', 'workbuddy-ai',
-    '--session-file', (Join-Path $env:USERPROFILE '.workbuddy-ai-session.json'),
-    '--log-file', (Join-Path $GW 'logs\proxy-intl.jsonl')
+    '--session-file', (Q (Join-Path $env:USERPROFILE '.workbuddy-ai-session.json')),
+    '--log-file', (Q (Join-Path $GW 'logs\proxy-intl.jsonl'))
   )
   Start-Sleep -Milliseconds 1500
   Write-Log -Comp launcher -Level (if_ok (Up 8788)) -Msg 'start.8788' -Extra @{ up = [int](Up 8788) }
@@ -72,13 +74,13 @@ if (-not $node) { Write-Log -Comp launcher -Level error -Msg 'node.missing' }
 
 if ($node -and -not (Up 8792)) {
   Start-Process -FilePath $node -WindowStyle Hidden -RedirectStandardOutput (OutLog 8792) -RedirectStandardError (ErrLog 8792) `
-    -ArgumentList (Join-Path $R 'src\opencode-bridge.mjs')
+    -ArgumentList (Q (Join-Path $R 'src\opencode-bridge.mjs'))
 }
 
 if ($node -and -not (Up 8790)) {
   $env:IG5_DEBUG = '1'
   Start-Process -FilePath $node -WindowStyle Hidden -RedirectStandardOutput (OutLog 8790) -RedirectStandardError (ErrLog 8790) `
-    -ArgumentList (Join-Path $R 'src\ig5-bridge.mjs')
+    -ArgumentList (Q (Join-Path $R 'src\ig5-bridge.mjs'))
 }
 Start-Sleep -Seconds 3
 Write-Log -Comp launcher -Level (if_ok (Up 8792)) -Msg 'start.8792' -Extra @{ up = [int](Up 8792) }
@@ -89,7 +91,7 @@ foreach ($spec in @(@{ p = 8792; f = 'src\opencode-bridge.mjs' }, @{ p = 8790; f
   $pp = [int]$spec.p
   if (-not (Up $pp) -and $node) {
     Write-Log -Comp launcher -Level warn -Msg 'retry' -Extra @{ port = $pp; file = $spec.f }
-    Start-Process -FilePath $node -ArgumentList (Join-Path $R $spec.f) -WindowStyle Hidden `
+    Start-Process -FilePath $node -ArgumentList (Q (Join-Path $R $spec.f)) -WindowStyle Hidden `
       -RedirectStandardOutput (OutLog $pp) -RedirectStandardError (ErrLog $pp)
     Start-Sleep -Seconds 3
     $ok = Up $pp
