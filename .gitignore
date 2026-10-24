@@ -13,3 +13,11 @@ gw/workbuddy2api/package.json
 *.pyc
 Thumbs.db
 .DS_Store
+
+# build artifacts
+dist/
+build/
+*.spec
+launcher.log
+frozen_probe.log
+probe2.log
