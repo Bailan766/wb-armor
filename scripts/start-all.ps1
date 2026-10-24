@@ -25,6 +25,8 @@ if (Test-Path $payloadFile) {
 
 
 
+if (-not (Test-Path $PY)) { & (Join-Path $R 'scripts\bootstrap.ps1') }
+
 if (-not (Up 8788) -and (Test-Path $PY)) {
 
   Start-Process -FilePath $PY -WindowStyle Hidden -WorkingDirectory (Join-Path $GW 'server') -ArgumentList @(

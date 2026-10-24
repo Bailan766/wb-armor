@@ -1,5 +1,5 @@
 # supervisor: ensure 8788 / 4097 / 8792 / 8790 are listening; start missing ones
-$Root = 'C:\Users\Administrator\Desktop\wb-armor'
+$Root = Split-Path -Parent $PSScriptRoot
 $GW = Join-Path $Root 'gw\workbuddy2api'
 $Py = Join-Path $GW '.venv\Scripts\python.exe'
 $LogDir = Join-Path $Root 'logs'

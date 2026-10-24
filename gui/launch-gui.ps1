@@ -6,9 +6,12 @@ $selftest = @(
   (Join-Path $R 'dev\selftest.py'),
   (Join-Path $R 'gui\selftest.py')
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-$pyw = 'C:\Program Files\Python314\pythonw.exe'
-$py = 'C:\Program Files\Python314\python.exe'
-if (-not (Test-Path $pyw)) { $pyw = $py }
+$pyw = (Get-Command pythonw.exe -ErrorAction SilentlyContinue).Source
+$py = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
+if (-not $py) { $py = (Get-Command python -ErrorAction SilentlyContinue).Source }
+if ($pyw) { $py = $py }
+if (-not $pyw) { $pyw = $py }
+if (-not $py) { Write-Host 'python not found in PATH'; exit 2 }
 
 # 1) single instance guard
 $already = @(Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' or Name='python.exe'" |

@@ -15,7 +15,7 @@ def _detect_base():
         if os.path.exists(os.path.join(cand, "wbarmor.ps1")) or os.path.isdir(os.path.join(cand, "gw")):
             return cand
     # 3) 回落默认桌面路径
-    return r"C:\Users\Administrator\Desktop\wb-armor"
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 BASE = _detect_base()
 GW   = os.path.join(BASE, "gw", "workbuddy2api")

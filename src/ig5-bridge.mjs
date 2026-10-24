@@ -1,28 +1,31 @@
-// IG5 桥 v12：上游流式可用时原样透传，退化时自合成事件流；失败兜底 opencode 免费档
+// IG5 桥 v13：上游流式可用时原样透传，退化时自合成事件流；失败兜底 opencode 免费档
 import http from 'node:http';
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const PORT = Number(process.env.IG5_PORT || 8790);
 const UP = process.env.IG5_UPSTREAM || 'http://127.0.0.1:8788/v1';
-const HERE = new URL('.', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
-const VENDOR = HERE + '../vendor/dsh-infinite-gen-5/infinite-gen-5.1-flash.md';
-const DEFAULT_PAYLOAD = 'C:/Users/Administrator/Desktop/dsh-infinite-gen-5-main/prompts/infinite-gen-5.1-flash.md';
+// fileURLToPath 才能正确处理中文/空格/盘符；URL.pathname 会给出 %E4%.. 百分号编码路径
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const VENDOR = path.join(HERE, '..', 'vendor', 'dsh-infinite-gen-5', 'infinite-gen-5.1-flash.md');
+const LEGACY = 'C:/Users/Administrator/Desktop/dsh-infinite-gen-5-main/prompts/infinite-gen-5.1-flash.md';
 function resolvePayload() {
-  for (const p of [process.env.IG5_PAYLOAD, DEFAULT_PAYLOAD, VENDOR]) {
+  for (const p of [process.env.IG5_PAYLOAD, VENDOR, LEGACY]) {
     if (p && fs.existsSync(p)) return p;
   }
-  throw new Error('no payload found (IG5_PAYLOAD / default / vendor)');
+  throw new Error('no payload found (IG5_PAYLOAD / vendor / legacy default): ' + VENDOR);
 }
 const PAYLOAD_PATH = resolvePayload();
 const PAYLOAD = fs.readFileSync(PAYLOAD_PATH, 'utf8');
 const LOG = [];
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,OPTIONS', 'access-control-max-age': '86400' };
 const DBG = () => process.env.IG5_DEBUG;
-const DBG_LOG = HERE + 'ig5-debug.log';
+const DBG_LOG = path.join(HERE, 'ig5-debug.log');
 // 日志轮转：超过 2MB 就把旧文件挪成 .1（保留一份），避免无限增长
 try {
   if (fs.existsSync(DBG_LOG) && fs.statSync(DBG_LOG).size > 2 * 1024 * 1024) {
-    const old = HERE + 'ig5-debug.log.1';
+    const old = path.join(HERE, 'ig5-debug.log.1');
     if (fs.existsSync(old)) fs.unlinkSync(old);
     fs.renameSync(DBG_LOG, old);
   }

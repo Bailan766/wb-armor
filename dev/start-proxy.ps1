@@ -1,5 +1,5 @@
 # WorkBuddy 反代：海外通道 8788，开机自启入口
-$d = 'C:\Users\Administrator\Desktop\wb-armor\gw\workbuddy2api'
+$d = Join-Path (Split-Path -Parent $PSScriptRoot) 'gw\workbuddy2api'
 $py = Join-Path $d '.venv\Scripts\python.exe'
 $log = Join-Path $d 'logs\proxy-intl.jsonl'
 New-Item -ItemType Directory -Force -Path (Join-Path $d 'logs') | Out-Null

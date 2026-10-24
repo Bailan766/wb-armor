@@ -1,4 +1,4 @@
-$GW = 'C:\Users\Administrator\Desktop\wb-armor\gw\workbuddy2api'
+$GW = Join-Path (Split-Path -Parent $PSScriptRoot) 'gw\workbuddy2api'
 $PY = Join-Path $GW '.venv\Scripts\python.exe'
 Set-Location (Join-Path $GW 'server')
 & $PY codebuddy_proxy.py --port 8788 `

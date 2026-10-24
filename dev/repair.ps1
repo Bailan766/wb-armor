@@ -1,6 +1,6 @@
 param([switch]$NoApp)
 $ErrorActionPreference = 'SilentlyContinue'
-$Root = 'C:\Users\Administrator\Desktop\wb-armor'
+$Root = Split-Path -Parent $PSScriptRoot
 $GW = Join-Path $Root 'gw\workbuddy2api'
 $Py = Join-Path $GW '.venv\Scripts\python.exe'
 function Up([int]$p) { [bool](Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue) }

@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'SilentlyContinue'
-$Root = 'C:\Users\Administrator\Desktop\wb-armor'
+$Root = $PSScriptRoot
 function PortUp([int]$p) { return [bool](Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue) }
 
 # 1) services

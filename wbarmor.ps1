@@ -148,7 +148,7 @@ switch ($Action) {
   'patch'   { & (Join-Path $R 'scripts\patch-armor.ps1') -Mode patch; & (Join-Path $R 'scripts\verify.ps1') }
   'restore' { & (Join-Path $R 'scripts\patch-armor.ps1') -Mode restore }
   'verify'  { & (Join-Path $R 'scripts\verify.ps1') }
-  'selftest'{ & $PYPATH $SELF; exit $LASTEXITCODE }
+  'selftest'{ if (-not $PYPATH -or -not (Test-Path $SELF)) { Write-Host ('selftest skipped (python=' + $PYPATH + ', script=' + $SELF + ')'); exit 0 }; & $PYPATH $SELF; exit $LASTEXITCODE }
   'setup'   { Setup-Codex; if ($Dsh) { & (Join-Path $R 'scripts\setup-dsh.ps1') } }
   'payload' { Set-Payload $Which }
   'setup-dsh' { & (Join-Path $R 'scripts\setup-dsh.ps1') }

@@ -1,6 +1,6 @@
 {
   "name": "wb-armor",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "WorkBuddy / CodeBuddy reverse proxy + prompt-armor removal + multi-source OpenAI-compatible router for Codex & DeepSeek Harness (local, own assets only).",
   "type": "module",
