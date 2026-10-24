@@ -12,17 +12,11 @@ Write-Host "== build release $ver =="
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
-# 1) export only committed files (git archive), so the package matches the tag
-$tmp = Join-Path $env:TEMP ("wbarmor-$ver-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
-New-Item -ItemType Directory -Force -Path $tmp | Out-Null
-Push-Location $Root
-& git archive --format=tar HEAD | tar -x -C $tmp
-Pop-Location
-
-# 2) copy staged tree
-Copy-Item (Join-Path $tmp '*') $stage -Recurse -Force
-Remove-Item $tmp -Recurse -Force
-
+# 1) stage working tree (exclude VCS / venv / dist / caches)
+$xd = @('.git','dist','node_modules','.venv','__pycache__','logs')
+$args = @($Root, $stage, '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/XD') + $xd
+& robocopy @args | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "robocopy failed: $LASTEXITCODE" }
 # 3) optional prebuilt launcher
 if (-not $SkipExe) {
   $exe = Join-Path $Root 'dist\wb-armor.exe'
@@ -34,31 +28,28 @@ if (-not $SkipExe) {
 
 # 4) version + notes
 Set-Content -Path (Join-Path $stage 'VERSION.txt') -Value $ver -Encoding ascii
-@"
-# wb-armor $ver
+$notesLines = @(
+  ('# wb-armor ' + $ver),
+  '',
+  'Contents: src/ (ig5-bridge 8790, opencode-bridge 8792), scripts/ (start, supervisor, armor, verify, dsh setup),',
+  'gui/ (tk console), config/ (catalog + dsh patch samples), dev/ (doctor, repair, fix-window, probe-tools), bin/ (optional exe).',
+  '',
+  'Install:',
+  '  1) unzip to any ASCII path',
+  '  2) requires Python 3.10+, Node 18+, opencode CLI',
+  '  3) first run: .\wbarmor.ps1 setup -Dsh',
+  '  4) start: 启动.cmd  or  .\wbarmor.ps1 gui',
+  '',
+  'Fixes in 1.0.1:',
+  '  - launcher recursion + wrong paths (gui/selftest.py, start-all.ps1)',
+  '  - DSH headless profile was empty (401); added /v1/messages + Anthropic SSE fallback',
+  '  - free-tier session reuse caused 98k tokens per call -> new session per request',
+  '  - strip zero-width chars from model output',
+  '  - sync-models wrote UTF-8 BOM -> Python JSONDecodeError',
+  '  - scheduled tasks pointed at moved files (WB8788 / WBSupervisor / OCB8792 / IG5B8790)'
+)
+$notesLines | Set-Content -Path $notes -Encoding utf8
 
-## 内容
-- `src/` 两个桥：`ig5-bridge.mjs`（8790，路由/载荷/兜底/事件流）、`opencode-bridge.mjs`（8792，免费档外壳）
-- `scripts/` 启动、自愈、破甲、校验、DSH 配置脚本
-- `gui/` Tk 控制台（Python 3.10+）
-- `config/` 模型目录样本、DSH patch 样本
-- `dev/` 排障件：doctor / repair / fix-window / probe-tools
-- `bin/wb-armor.exe` 预打包启动器（可选，需能写 %TEMP%）
-
-## 安装
-1. 解压到任意目录（路径不要含中文）。
-2. 需要 Python 3.10+、Node 18+、opencode CLI。
-3. 首次：`.\wbarmor.ps1 setup -Dsh`（配置 Codex 与 DSH 指向本地桥）。
-4. 启动：双击 `启动.cmd` 或 `.\wbarmor.ps1 gui`。
-
-## 本版修复
-- 启动链递归与三处错误路径（`gui\selftest.py`、`start-all.ps1`）
-- DSH headless profile 空白配置导致 401；新增 `/v1/messages` 与 Anthropic SSE 兜底
-- 免费档会话复用导致 token 累积（98k/句）→ 改为每请求新会话
-- 输出零宽字符 `\u200b` 清洗
-- `sync-models` 写入 BOM 导致 Python 侧 JSONDecodeError
-- 计划任务指向被移动文件（`WB8788`/`WBSupervisor`/`OCB8792`/`IG5B8790`）
-"@ | Set-Content -Path $notes -Encoding utf8
 
 # 5) manifest
 $files = Get-ChildItem $stage -Recurse -File | Where-Object { $_.Name -ne 'MANIFEST.sha256' }
