@@ -1,0 +1,15 @@
+.workbuddy-ai-session.json
+*.session.json
+.payload
+ig5-debug.log
+logs/
+*.log
+
+gw/workbuddy2api/.venv/
+gw/workbuddy2api/logs/
+gw/workbuddy2api/.git/
+gw/workbuddy2api/package.json
+**/__pycache__/
+*.pyc
+Thumbs.db
+.DS_Store

@@ -1,0 +1,22 @@
+# 把 DSH 的 deepseek provider 指到本地反代 :8788
+# 用法：dsh --profile web --patch <本文件> --dump-config   （先验证）
+#       $env:DEEPSEEK_API_KEY='sk-local-proxy'; dsh headless --patch <本文件> --model deepseek-v4.1-flash "print OK"
+- id: agent-default-model
+  config:
+    provider: deepseek-official
+    model: deepseek-v4.1-flash
+
+- id: llm-deepseek
+  config:
+    baseURL: http://127.0.0.1:8788/v1
+    models:
+      - id: deepseek-v4.1-flash
+        name: DeepSeek-V4.1-Flash（proxy）
+        contextWindow: 1000000
+        inputModalities:
+          - text
+      - id: deepseek-flash
+        name: DeepSeek-V4.1-Flash（proxy 默认别名）
+        contextWindow: 1000000
+        inputModalities:
+          - text

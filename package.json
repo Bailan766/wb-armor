@@ -1,0 +1,17 @@
+{
+  "name": "wb-armor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WorkBuddy / CodeBuddy reverse proxy + prompt-armor removal + multi-source OpenAI-compatible router for Codex & DeepSeek Harness (local, own assets only).",
+  "type": "module",
+  "scripts": {
+    "up": "powershell -NoProfile -ExecutionPolicy Bypass -File ./wbarmor.ps1 up",
+    "down": "powershell -NoProfile -ExecutionPolicy Bypass -File ./wbarmor.ps1 down",
+    "status": "powershell -NoProfile -ExecutionPolicy Bypass -File ./wbarmor.ps1 status",
+    "selftest": "powershell -NoProfile -ExecutionPolicy Bypass -File ./wbarmor.ps1 selftest",
+    "gui": "powershell -NoProfile -ExecutionPolicy Bypass -File ./wbarmor.ps1 gui",
+    "setup": "powershell -NoProfile -ExecutionPolicy Bypass -File ./wbarmor.ps1 setup",
+    "armor": "python generate-client-armor.py"
+  },
+  "license": "MIT"
+}
