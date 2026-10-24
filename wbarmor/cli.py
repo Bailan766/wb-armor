@@ -134,16 +134,16 @@ def cmd_tasks(a) -> int:
 
 
 def cmd_token_browser(a) -> int:
-    if not core.cdp_ready(core.CDP_PORT):
-        for line in core.open_login_browser():
-            print(line)
-        if not a.capture:
-            print("登录完成后重跑： python -m wbarmor token-browser --capture" + (" --inject" if a.inject else ""))
-            return 0
-        for _ in range(30):
-            if core.cdp_ready(core.CDP_PORT):
-                break
-            time.sleep(1)
+    # 总是先把登录页打开/切到前台（CDP 已在跑就复用标签页）
+    for line in core.open_login_browser():
+        print(line)
+    if not a.capture:
+        print("登录完成后重跑： python -m wbarmor token-browser --capture" + (" --inject" if a.inject else ""))
+        return 0
+    for _ in range(30):
+        if core.cdp_ready(core.CDP_PORT):
+            break
+        time.sleep(1)
     res = core.capture_tokens()
     if not res.get("ok"):
         print("CAPTURE fail: %s (href=%s)" % (res.get("reason") or "no token", res.get("href") or "?"))
