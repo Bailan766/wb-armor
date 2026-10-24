@@ -12,12 +12,16 @@ const j = (res, code, o) => { const b = JSON.stringify(o); res.writeHead(code, {
 const body = async (req) => { const c = []; for await (const x of req) c.push(x); return Buffer.concat(c).toString('utf8'); };
 
 async function ensureSession() {
-  if (sessionId) return sessionId;
+  // 默认每次请求新建 session：复用单一 session 会把历史一路累积（实测一句“只回四个字”烧到 98k tokens）
+  if (process.env.OC_REUSE === '1' && sessionId) return sessionId;
   const r = await fetch(SRV + '/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'oc-bridge' }) });
   if (!r.ok) throw new Error('session ' + r.status);
-  sessionId = (await r.json()).id;
-  return sessionId;
+  const id = (await r.json()).id;
+  if (process.env.OC_REUSE === '1') sessionId = id;
+  return id;
 }
+// 去掉零宽字符（模型偶尔在首字符前塞 U+200B，客户端会显示成“\u200b好”）
+const ZW = /[\u200b\u200c\u200d\ufeff\u2060]/g;
 
 http.createServer(async (req, res) => {
   try {
@@ -45,7 +49,7 @@ http.createServer(async (req, res) => {
       }
       if (!r.ok) { const t = await r.text(); return j(res, r.status, { error: t.slice(0, 300) }); }
       const data = await r.json();
-      const out = (data.parts || []).filter((p) => p.type === 'text').map((p) => p.text).join('');
+      const out = (data.parts || []).filter((p) => p.type === 'text').map((p) => p.text).join('').replace(ZW, '').trim();
       const toolParts = (data.parts || []).filter((p) => p.type === 'tool' || p.type === 'tool-call');
       const finish = toolParts.length ? 'tool_calls' : 'stop';
       const tool_calls = toolParts.map((p, i) => ({

@@ -18,8 +18,22 @@ const PAYLOAD = fs.readFileSync(PAYLOAD_PATH, 'utf8');
 const LOG = [];
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,OPTIONS', 'access-control-max-age': '86400' };
 const DBG = () => process.env.IG5_DEBUG;
-const dbg = (s) => { if (DBG()) fs.appendFileSync(HERE + 'ig5-debug.log', s); };
-const note = (req, code) => { LOG.push(`${new Date().toISOString()} ${req.method} ${req.url} -> ${code}`); if (LOG.length > 200) LOG.shift(); };
+const DBG_LOG = HERE + 'ig5-debug.log';
+// 日志轮转：超过 2MB 就把旧文件挪成 .1（保留一份），避免无限增长
+try {
+  if (fs.existsSync(DBG_LOG) && fs.statSync(DBG_LOG).size > 2 * 1024 * 1024) {
+    const old = HERE + 'ig5-debug.log.1';
+    if (fs.existsSync(old)) fs.unlinkSync(old);
+    fs.renameSync(DBG_LOG, old);
+  }
+} catch { }
+const dbg = (s) => { if (DBG()) fs.appendFileSync(DBG_LOG, s); };
+const STATS = { served: 0, fallbacks: 0, lastModel: null, lastStatus: 0 };
+const note = (req, code) => {
+  LOG.push(`${new Date().toISOString()} ${req.method} ${req.url} -> ${code}`);
+  if (LOG.length > 200) LOG.shift();
+  if (req && String(req.url || '').includes('/responses')) STATS.lastStatus = code;
+};
 const json = (res, code, obj, req) => { const b = JSON.stringify(obj); res.writeHead(code, { ...CORS, 'content-type': 'application/json', 'content-length': Buffer.byteLength(b) }); res.end(b); if (req) note(req, code); };
 const readBody = async (req) => { const c = []; for await (const x of req) c.push(x); return Buffer.concat(c).toString('utf8'); };
 
@@ -46,7 +60,12 @@ const server = http.createServer(async (req, res) => {
     let p = (req.url || '/').split('?')[0].replace(/\/+$/, '') || '/';
     while (/^\/v1\/v1(\/|$)/.test(p)) p = p.replace(/^\/v1/, '');
 
-    if (req.method === 'GET' && p === '/health') return json(res, 200, { ok: true, upstream: UP, payload_chars: PAYLOAD.length, recent: LOG.slice(-10) }, req);
+    if (req.method === 'GET' && p === '/health') return json(res, 200, {
+      ok: true, upstream: UP, payload_chars: PAYLOAD.length,
+      served: STATS.served, fallbacks: STATS.fallbacks,
+      last_model: STATS.lastModel, last_status: STATS.lastStatus,
+      recent: LOG.slice(-10)
+    }, req);
 
     if (req.method === 'GET' && /\/models$/.test(p)) {
       const raw = await (await fetch(UP + '/models')).json();
@@ -67,7 +86,8 @@ const server = http.createServer(async (req, res) => {
       body.model = body.model || 'deepseek-v4.1-flash';
       const ocDirect = typeof body.model === 'string' && body.model.startsWith('oc-');
       if (ocDirect) body.model = body.model.slice(3);
-
+      STATS.served += 1;
+      STATS.lastModel = body.model;
       const instr = typeof body.instructions === 'string' ? body.instructions : '';
       delete body.instructions;
       const sysItem = { type: 'message', role: 'user', content: [{ type: 'input_text', text: PAYLOAD + (instr ? '\n\n' + instr : '') }] };
@@ -142,8 +162,10 @@ const server = http.createServer(async (req, res) => {
       }
 
       // 2) 兜底 / 非流式合成
-      text = text || await askOpencode(ocDirect ? body.model : (process.env.OC_MODEL || 'deepseek-v4.1-flash-free'),
+      const fallbackText = text || await askOpencode(ocDirect ? body.model : (process.env.OC_MODEL || 'deepseek-v4.1-flash-free'),
         [{ role: 'system', content: PAYLOAD }, ...convoOf(body), { role: 'system', content: '工具不可用：请直接用文字回答当前问题，不要调用工具。' }].slice(-12));
+      if (!text && fallbackText) STATS.fallbacks += 1;
+      text = fallbackText;
       if (!text) text = '[bridge] 两个上游都没有返回内容，检查 8788 鉴权与 4097 是否在跑。';
       dbg(`=== FALLBACK/合成 textlen=${text.length} wantStream=${wantStream} ===\n`);
 
@@ -154,8 +176,9 @@ const server = http.createServer(async (req, res) => {
           usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }
         }, req);
       }
-      res.writeHead(200, { ...CORS, 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+      res.writeHead(200, { ...CORS, 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-ig5-fallback': 'opencode' });
       note(req, 200);
+      if (Array.isArray(body.tools) && body.tools.length) dbg(`=== 注意：本次走兜底，${body.tools.length} 个工具无法被执行 ===\n`);
       const id = 'resp_bridge_' + Date.now().toString(36);
       const createdAt = Math.floor(Date.now() / 1000);
       const item = { id: id + '_msg', type: 'message', role: 'assistant', content: [{ type: 'text', text }] };
@@ -175,6 +198,50 @@ const server = http.createServer(async (req, res) => {
       ev('response.output_item.done', { output_index: 0, item });
       ev('response.completed', { response: fin });
       return res.end();
+    }
+
+    // Anthropic /v1/messages：DSH 的 deepseek provider 走这个协议
+    if (req.method === 'POST' && /\/messages$/.test(p)) {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      body.model = body.model || 'deepseek-v4.1-flash';
+      const sys = typeof body.system === 'string' ? body.system : (Array.isArray(body.system) ? body.system.map((x) => x.text || '').join('') : '');
+      body.system = PAYLOAD + (sys ? '\n\n' + sys : '');
+      let up, txt = '';
+      try {
+        up = await fetch(UP + '/messages', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+        if (up.ok) {
+          if (body.stream) {
+            res.writeHead(200, { ...CORS, 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+            note(req, 200);
+            for await (const c of up.body) res.write(c);
+            return res.end();
+          }
+          return json(res, 200, await up.json(), req);
+        }
+      } catch { }
+      // fallback: opencode free tier, repackaged as an Anthropic message
+      const msgs = (Array.isArray(body.messages) ? body.messages : []).map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: toText(m) }));
+      txt = await askOpencode(process.env.OC_MODEL || 'deepseek-v4.1-flash-free', [{ role: 'system', content: PAYLOAD }, ...msgs].slice(-10));
+      if (txt) STATS.fallbacks += 1;
+      if (!txt) txt = '[bridge] upstream unavailable';
+      const mid = 'msg_' + Date.now().toString(36);
+      if (body.stream) {
+        res.writeHead(200, { ...CORS, 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+        note(req, 200);
+        const ev = (t, o) => res.write('event: ' + t + '\ndata: ' + JSON.stringify({ type: t, ...o }) + '\n\n');
+        ev('message_start', { message: { id: mid, type: 'message', role: 'assistant', model: body.model, content: [], stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } } });
+        ev('content_block_start', { index: 0, content_block: { type: 'text', text: '' } });
+        ev('content_block_delta', { index: 0, delta: { type: 'text_delta', text: txt } });
+        ev('content_block_stop', { index: 0 });
+        ev('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 0 } });
+        ev('message_stop', {});
+        return res.end();
+      }
+      return json(res, 200, {
+        id: mid, type: 'message', role: 'assistant', model: body.model,
+        content: [{ type: 'text', text: txt }], stop_reason: 'end_turn',
+        usage: { input_tokens: 0, output_tokens: 0 }
+      }, req);
     }
 
     if (req.method === 'POST' && /\/chat\/completions$/.test(p)) {

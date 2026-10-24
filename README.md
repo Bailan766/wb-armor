@@ -402,3 +402,64 @@ Select-String -Path "$env:USERPROFILE\.dsh\profiles\web\cordis.patch.yml" -Patte
 | 8790 载荷注入生效 | 已知 | 2026-10-24 | 复述首行 `[MODE` 实测 |
 | 客户端破甲在 Codex 新版字段改名后仍有效 | 未知 | — | 依赖 base_instructions 字段名 |
 
+
+---
+
+## 9. 新增能力与修复记录（2026-10-24）
+
+### 9.1 启动链修复（`启动.cmd` 打不开的根因）
+
+三处路径/递归错误已修：
+
+| 文件 | 原问题 | 现状 |
+|---|---|---|
+| `scripts\launch-gui.ps1` | 回调 `wbarmor.ps1 gui` → 无限递归 | 改为薄转发到 `gui\launch-gui.ps1` |
+| `wbarmor.ps1` 的 `gui` 分支 | 调用的是递归入口 | 直连 `gui\launch-gui.ps1` |
+| `gui\launch-gui.ps1` | `gui\selftest.py` 不存在 → `exit 1`；`start-all.ps1` 路径错 | 探测 `dev\selftest.py`；缺自检不阻断；路径改为 `scripts\start-all.ps1` |
+
+```powershell
+cd C:\Users\Administrator\Desktop\wb-armor
+cmd /c "启动.cmd"        # 期望：GUI launched. + 四端口 True
+```
+
+### 9.2 新增命令
+
+```powershell
+.\wbarmor.ps1 sync-models     # 从 8790 拉真实模型表，生成 Codex 目录（无 BOM，带 .bak）
+.\wbarmor.ps1 status          # 端口 + health + served/fallbacks/last_model/last_status
+powershell -File dev\repair.ps1          # 去重代理 + 补 8788 + 窗口句柄丢失时重启 app
+powershell -File dev\fix-window.ps1      # 把跑到屏幕外的 ChatGPT 窗口拉回可见区
+powershell -File scripts\supervisor.ps1  # 四端口自愈（计划任务 WBSupervisor 每 5 分钟）
+```
+
+### 9.3 DSH 接入（web + headless 双侧）
+
+- web profile：`~\.dsh\profiles\web\cordis.patch.yml` —— `llm-deepseek.baseURL = http://127.0.0.1:8790/v1` + `personaPrefix` 破甲
+- headless profile：`~\.dsh\profiles\headless\cordis.patch.yml` —— 本次补齐（原来为空 `[]`，导致 headless 直连 `api.deepseek.com` 报 401）
+- 桥新增 `POST /v1/messages`（Anthropic 协议）—— DSH 的 deepseek provider 走这个端点；上游 429 时桥自合成 `message_start → content_block_delta → message_stop` 事件流
+
+```powershell
+$env:DEEPSEEK_API_KEY='sk-local-proxy'
+& 'C:\Users\Administrator\AppData\Local\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd' headless "只回四个字：DSH可用"
+# exit=0，输出：好
+```
+
+### 9.4 已知限制（功能面）
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| 聊天对话 | 可用 | 主链路 200 走透传；429 时自动落 opencode 免费档 |
+| 工具调用（写文件/跑命令） | 依赖额度 | 免费档无工具协议；WorkBuddy 429 时只能聊，不能调工具 |
+| 多轮上下文 | 可用 | 兜底路径会带最近 8 条消息 |
+| 模型选择 | 可用 | `sync-models` 生成 38 条（29 WorkBuddy + 9 opencode） |
+| DSH headless | 可用 | 需任意非空 `DEEPSEEK_API_KEY` |
+| Codex 窗口不显示 | 已修 | 原因为窗口坐标跑到屏幕外（x=-343），`fix-window.ps1` 可复位 |
+
+| 断言 | 态 | 有效期到 | 依据 |
+|---|---|---|---|
+| 启动链递归已修、GUI 可拉起 | 已知 | 2026-10-24 | `GUI launched.` + `gui_procs=1` |
+| DSH headless 经桥可用 | 已知 | 2026-10-24 | `dsh headless` exit=0 输出「好」 |
+| 桥 `/v1/messages` 可用 | 已知 | 2026-10-24 | `type=message text=桥通` |
+| 模型目录 38 条、无 BOM | 已知 | 2026-10-24 | `sync-models` 输出 + BOM 检查 False |
+| 工具调用可用性取决于 WorkBuddy 额度 | 已知 | — | 带 tools 直打 8788 返回 429 |
+| reboot 后自启全链路 | 未知 | — | 未做重启验证 |

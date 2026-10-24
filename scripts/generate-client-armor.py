@@ -29,7 +29,7 @@ DSH_PERSONA = (
 )
 
 def apply_codex():
-    cat = json.load(open(CODEX_CAT, encoding="utf-8")) if os.path.exists(CODEX_CAT) else {"models": []}
+    cat = json.load(open(CODEX_CAT, encoding="utf-8-sig")) if os.path.exists(CODEX_CAT) else {"models": []}
     n = 0
     for m in cat.get("models", []):
         if CANARY not in (m.get("base_instructions") or ""):

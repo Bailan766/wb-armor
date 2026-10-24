@@ -303,6 +303,7 @@ class App:
         ttk.Button(bar, text="🎁 免费档探活", command=self.do_oc_test).pack(side="left", padx=4)
         ttk.Button(bar, text="🔧 配置 Codex", command=self.do_setup_codex).pack(side="left", padx=4)
         ttk.Button(bar, text="🧩 配置 DSH", command=self.do_setup_dsh).pack(side="left", padx=4)
+        ttk.Button(bar, text="⟲ 同步模型", command=self.do_sync_models).pack(side="left", padx=4)
 
         ar = ttk.Frame(self.root); ar.pack(fill="x", padx=14, pady=4)
         ttk.Label(ar, text="模板破甲：").pack(side="left")
@@ -372,6 +373,8 @@ class App:
         try:
             st, j = http_json("http://127.0.0.1:8790/health")
             self.log("  /health ok=%s upstream=%s payload=%d chars" % (j.get("ok"), j.get("upstream"), j.get("payload_chars", 0)))
+            self.log("  served=%s fallbacks=%s last_model=%s last_status=%s" % (
+                j.get("served"), j.get("fallbacks"), j.get("last_model"), j.get("last_status")))
         except Exception as e:
             self.log("  /health 不可达:", e)
         try: self.tokstat.set("token: " + token_status())
@@ -385,6 +388,18 @@ class App:
 
     def do_verify(self):
         self.log("== 验证破甲 =="); self.bg(run_verify, self.refresh)
+
+    def do_sync_models(self):
+        self.log("== 同步模型目录（从 8790 拉真实清单）==")
+        def work():
+            import subprocess
+            ps1 = os.path.join(BASE, "wbarmor.ps1")
+            if not os.path.exists(ps1):
+                return "缺少 wbarmor.ps1"
+            r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1, "sync-models"],
+                               capture_output=True, text=True, timeout=180)
+            return ((r.stdout or "") + (r.stderr or "")).strip()
+        self.bg(work, self.refresh)
 
     def do_patch(self, mode):
         self.log("== 破甲 %s ==" % mode); self.bg(lambda: run_patch(mode), self.refresh)

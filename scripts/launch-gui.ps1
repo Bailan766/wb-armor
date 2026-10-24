@@ -1,4 +1,5 @@
-# launch-gui.ps1 - one-shot launcher (kept for backwards compat)
-# Delegates to wbarmor.ps1 gui (ensures services -> selftest -> pythonw GUI).
+# launch-gui.ps1 - thin forwarder kept for backwards compatibility.
+# IMPORTANT: do NOT call wbarmor.ps1 gui here (that action invokes this file -> infinite loop).
 $ErrorActionPreference = 'Stop'
-& (Join-Path (Split-Path -Parent $PSScriptRoot) 'wbarmor.ps1') gui
+$root = Split-Path -Parent $PSScriptRoot
+& (Join-Path $root 'gui\launch-gui.ps1')
