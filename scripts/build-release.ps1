@@ -14,7 +14,8 @@ New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
 # 1) stage working tree (exclude VCS / venv / dist / caches)
 $xd = @('.git','dist','node_modules','.venv','__pycache__','logs')
-$args = @($Root, $stage, '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/XD') + $xd
+$xf = @('ig5-debug.log*', '*.log', 'wb-armor.exe')
+$args = @($Root, $stage, '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/XD') + $xd + @('/XF') + $xf
 & robocopy @args | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy failed: $LASTEXITCODE" }
 # 3) optional prebuilt launcher
@@ -61,7 +62,8 @@ $lines | Set-Content -Path (Join-Path $stage 'MANIFEST.sha256') -Encoding ascii
 
 # 6) zip
 if (Test-Path $zip) { Remove-Item $zip -Force }
-Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -CompressionLevel Optimal
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[IO.Compression.ZipFile]::CreateFromDirectory($stage, $zip, [IO.Compression.CompressionLevel]::Optimal, $false)
 $zipInfo = Get-Item $zip
 $zipHash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
 
