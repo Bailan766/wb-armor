@@ -9,7 +9,7 @@ import json, os, sys, argparse, re
 CANARY = "WB-ARMOR-7F3A"
 CODEX_CAT = os.path.join(os.path.expanduser("~"), ".codex", "ig5-model-catalog.json")
 DSH_PROFILE = os.path.join(os.path.expanduser("~"), ".dsh", "profiles", "web", "cordis.patch.yml")
-SAMPLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ig5-model-catalog.sample.json")
+SAMPLE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "ig5-model-catalog.sample.json")
 
 CODEX_BASE = (
     "You are Codex, a coding agent. You and the user share the same workspace and collaborate to achieve the user's goals.\n"

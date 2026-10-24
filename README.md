@@ -9,6 +9,33 @@ WorkBuddy / CodeBuddy **本地反代 + 提示词破甲 + 多源模型路由**，
 
 ---
 
+
+## 目录结构
+
+```
+wb-armor/
+├─ wb-armor.exe          双击启动（GUI，PyInstaller 单文件）
+├─ 启动.cmd / 启动.ps1     纯脚本启动（受限环境用这个，最稳）
+├─ wbarmor.ps1           统一入口：up|down|status|gui|setup|setup-dsh|patch|payload
+├─ gui/                  wbarmor_gui.py（控制台）/ launcher.py（exe 源码）
+├─ scripts/              start-all / patch-armor / verify / setup-dsh / supervisor ...
+├─ src/                  ig5-bridge.mjs(8790) / opencode-bridge.mjs(8792)
+├─ gw/workbuddy2api/     反代 8788（上游 submodule: Zhengyuuuui/workbuddy2api）
+├─ vendor/dsh-infinite-gen-5/  破甲载荷（MIT, SunsetRNE）
+├─ config/               dsh-*.patch.yml / ig5-model-catalog.sample.json
+├─ docs/                 dsh-schema.json 等参考
+├─ dev/                  selftest / probes / legacy（开发用，非必需）
+└─ README / START / CREDITS / LICENSE / PUSH
+```
+
+## 客户端配置（Codex 与 DeepSeek Harness）
+
+**Codex**：`wbarmor.ps1 setup` 自动写 `~\.codex\config.toml` → `base_url=http://127.0.0.1:8790/v1`，`model=deepseek-v4.1-flash`，并给 catalog 6 个 model 上破甲 `base_instructions`。
+
+**DeepSeek Harness**：`wbarmor.ps1 setup-dsh`（或 GUI「🧩 配置 DSH」）把 `~/.dsh/profiles/web/cordis.patch.yml` 指向 `8790` 并写入破甲 `personaPrefix`（`WB-ARMOR-7F3A`），先备份。也支持一次到位：`wbarmor.ps1 setup -Dsh`。
+
+---
+
 ## 0. 一键入口（新增）
 
 图形控制台 + CLI 单入口都在根目录，双击即用：

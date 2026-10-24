@@ -1,14 +1,26 @@
 [CmdletBinding()]
 param(
-  [ValidateSet('gui','up','down','status','restart','patch','restore','verify','selftest','setup','payload')]
+  [ValidateSet('gui','up','down','status','restart','patch','restore','verify','selftest','setup','payload','setup-dsh')]
   [string]$Action = 'gui',
-  [string]$Which = 'flash'
+  [string]$Which = 'flash',
+  [switch]$Dsh
 )
 $ErrorActionPreference = 'Stop'
-$R      = 'C:\Users\Administrator\Desktop\wb-armor'
+$R      = $PSScriptRoot
+if (-not $R) { $R = Split-Path -Parent $MyInvocation.MyCommand.Path }
 $GUI    = Join-Path $R 'gui\wbarmor_gui.py'
-$SELF   = Join-Path $R 'gui\selftest.py'
-$PYPATH = 'C:\Program Files\Python314\python.exe'
+$SELF   = Join-Path $R 'dev\selftest.py'
+function Resolve-Python {
+  foreach ($c in @(
+    (Join-Path $GW '.venv\Scripts\python.exe'),
+    'C:\Program Files\Python314\python.exe'
+  )) { if (Test-Path $c) { return $c } }
+  $cmd = Get-Command python -ErrorAction SilentlyContinue
+  if ($cmd) { return $cmd.Source }
+  return $null
+}
+$GW = Join-Path $R 'gw\workbuddy2api'
+$PYPATH = Resolve-Python
 $Ports  = 8788,4097,8792,8790
 $Tasks  = 'WB8788','OC4097','OCB8792','IG5B8790'
 function Port-Up([int]$p) { [bool](Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue) }
@@ -78,19 +90,20 @@ function Set-Payload([string]$which) {
 }
 
 switch ($Action) {
-  'up'      { & (Join-Path $R 'start-all.ps1'); Show-Status | Out-Null }
+  'up'      { & (Join-Path $R 'scripts\start-all.ps1'); Show-Status | Out-Null }
   'down'    { foreach ($t in $Tasks) { schtasks /End /TN $t 2>$null | Out-Null }; 'stopped four tasks' }
   'status'  { Show-Status | Out-Null }
-  'restart' { foreach ($t in $Tasks) { schtasks /End /TN $t 2>$null | Out-Null }; Start-Sleep 2; & (Join-Path $R 'start-all.ps1'); Show-Status | Out-Null }
-  'patch'   { & (Join-Path $R 'patch-armor.ps1') -Mode patch; & (Join-Path $R 'verify.ps1') }
-  'restore' { & (Join-Path $R 'patch-armor.ps1') -Mode restore }
-  'verify'  { & (Join-Path $R 'verify.ps1') }
+  'restart' { foreach ($t in $Tasks) { schtasks /End /TN $t 2>$null | Out-Null }; Start-Sleep 2; & (Join-Path $R 'scripts\start-all.ps1'); Show-Status | Out-Null }
+  'patch'   { & (Join-Path $R 'scripts\patch-armor.ps1') -Mode patch; & (Join-Path $R 'scripts\verify.ps1') }
+  'restore' { & (Join-Path $R 'scripts\patch-armor.ps1') -Mode restore }
+  'verify'  { & (Join-Path $R 'scripts\verify.ps1') }
   'selftest'{ & $PYPATH $SELF; exit $LASTEXITCODE }
-  'setup'   { Setup-Codex }
+  'setup'   { Setup-Codex; if ($Dsh) { & (Join-Path $R 'scripts\setup-dsh.ps1') } }
   'payload' { Set-Payload $Which }
+  'setup-dsh' { & (Join-Path $R 'scripts\setup-dsh.ps1') }
   'gui' {
-    & (Join-Path $R 'start-all.ps1') | Out-Null
-    & (Join-Path $R 'gui\launch-gui.ps1')
+    & (Join-Path $R 'scripts\start-all.ps1') | Out-Null
+    & (Join-Path $R 'scripts\launch-gui.ps1')
     Show-Status | Out-Null
   }
   default   { Write-Host ('unknown action: ' + $Action) }

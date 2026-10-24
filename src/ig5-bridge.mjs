@@ -5,7 +5,7 @@ import fs from 'node:fs';
 const PORT = Number(process.env.IG5_PORT || 8790);
 const UP = process.env.IG5_UPSTREAM || 'http://127.0.0.1:8788/v1';
 const HERE = new URL('.', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
-const VENDOR = HERE + 'vendor/dsh-infinite-gen-5/infinite-gen-5.1-flash.md';
+const VENDOR = HERE + '../vendor/dsh-infinite-gen-5/infinite-gen-5.1-flash.md';
 const DEFAULT_PAYLOAD = 'C:/Users/Administrator/Desktop/dsh-infinite-gen-5-main/prompts/infinite-gen-5.1-flash.md';
 function resolvePayload() {
   for (const p of [process.env.IG5_PAYLOAD, DEFAULT_PAYLOAD, VENDOR]) {
@@ -18,7 +18,7 @@ const PAYLOAD = fs.readFileSync(PAYLOAD_PATH, 'utf8');
 const LOG = [];
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,OPTIONS', 'access-control-max-age': '86400' };
 const DBG = () => process.env.IG5_DEBUG;
-const dbg = (s) => { if (DBG()) fs.appendFileSync('C:/Users/Administrator/Desktop/wb-armor/ig5-debug.log', s); };
+const dbg = (s) => { if (DBG()) fs.appendFileSync(HERE + 'ig5-debug.log', s); };
 const note = (req, code) => { LOG.push(`${new Date().toISOString()} ${req.method} ${req.url} -> ${code}`); if (LOG.length > 200) LOG.shift(); };
 const json = (res, code, obj, req) => { const b = JSON.stringify(obj); res.writeHead(code, { ...CORS, 'content-type': 'application/json', 'content-length': Buffer.byteLength(b) }); res.end(b); if (req) note(req, code); };
 const readBody = async (req) => { const c = []; for await (const x of req) c.push(x); return Buffer.concat(c).toString('utf8'); };

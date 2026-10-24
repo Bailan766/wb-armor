@@ -2,7 +2,7 @@
 
 $ErrorActionPreference = 'SilentlyContinue'
 
-$R = 'C:\Users\Administrator\Desktop\wb-armor'
+$R = Split-Path -Parent $PSScriptRoot
 
 $GW = Join-Path $R 'gw\workbuddy2api'
 
@@ -64,13 +64,13 @@ $node = 'C:\Program Files\nodejs\node.exe'
 
 if (-not (Test-Path $node)) { $node = (Get-Command node -ErrorAction SilentlyContinue).Source }
 
-if ($node -and -not (Up 8792)) { Start-Process -FilePath $node -WindowStyle Hidden -ArgumentList (Join-Path $R 'opencode-bridge.mjs') }
+if ($node -and -not (Up 8792)) { Start-Process -FilePath $node -WindowStyle Hidden -ArgumentList (Join-Path $R 'src\opencode-bridge.mjs') }
 
 if ($node -and -not (Up 8790)) {
 
   $env:IG5_DEBUG = '1'
 
-  Start-Process -FilePath $node -WindowStyle Hidden -ArgumentList (Join-Path $R 'ig5-bridge.mjs')
+  Start-Process -FilePath $node -WindowStyle Hidden -ArgumentList (Join-Path $R 'src\ig5-bridge.mjs')
 
 }
 

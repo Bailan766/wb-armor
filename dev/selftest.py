@@ -1,6 +1,6 @@
 import os, sys, json, importlib.util
 here = os.path.dirname(os.path.abspath(__file__))
-spec = importlib.util.spec_from_file_location("wbarmor_gui", os.path.join(here, "wbarmor_gui.py"))
+spec = importlib.util.spec_from_file_location("wbarmor_gui", os.path.join(os.path.dirname(here), "gui", "wbarmor_gui.py"))
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 fails = 0
 def check(name, cond, detail=""):
@@ -18,8 +18,14 @@ except Exception as e:
 ok, msg = m.inject_token("short", "", "device")
 check("reject bad device token", ok is False, msg)
 # real session structure preserved on access-token injection
-rs = m.SESSION; bak = None
-if os.path.exists(rs): bak = rs + ".selftest.bak"; os.replace(rs, bak)
+rs = m.SESSION
+# 若真实 session 被占用，改用一个临时副本验证注入逻辑（不碰线上文件）
+import tempfile
+tmpdir = tempfile.mkdtemp(prefix="wb_selftest_")
+m.SESSION = os.path.join(tmpdir, "session.json")
+rs = m.SESSION
+bak = None
+if os.path.exists(m.SESSION): bak = m.SESSION + ".bak"; os.replace(m.SESSION, bak)
 try:
     before = json.load(open(rs, encoding="utf-8")) if False else {}
     # seed a fake session with auth/account to mimic real shape

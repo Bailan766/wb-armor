@@ -27,13 +27,13 @@ if (-not (Test-Port 4097)) {
 }
 
 if (-not (Test-Port 8792)) {
-  Start-Process -FilePath 'node' -WindowStyle Hidden -ArgumentList (Join-Path $Root 'opencode-bridge.mjs')
+  Start-Process -FilePath 'node' -WindowStyle Hidden -ArgumentList (Join-Path $Root 'src\opencode-bridge.mjs')
   "  start 8792" | Add-Content -Path $Log
 }
 
 if (-not (Test-Port 8790)) {
   $env:IG5_DEBUG = '1'
-  Start-Process -FilePath 'node' -WindowStyle Hidden -ArgumentList (Join-Path $Root 'ig5-bridge.mjs')
+  Start-Process -FilePath 'node' -WindowStyle Hidden -ArgumentList (Join-Path $Root 'src\ig5-bridge.mjs')
   "  start 8790" | Add-Content -Path $Log
 }
 

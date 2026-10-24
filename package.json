@@ -11,7 +11,7 @@
     "selftest": "powershell -NoProfile -ExecutionPolicy Bypass -File ./wbarmor.ps1 selftest",
     "gui": "powershell -NoProfile -ExecutionPolicy Bypass -File ./wbarmor.ps1 gui",
     "setup": "powershell -NoProfile -ExecutionPolicy Bypass -File ./wbarmor.ps1 setup",
-    "armor": "python generate-client-armor.py"
+    "armor": "python scripts/generate-client-armor.py"
   },
   "license": "MIT"
 }

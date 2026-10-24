@@ -1,23 +1,26 @@
+# ---- secrets / runtime ----
 .workbuddy-ai-session.json
 *.session.json
 .payload
-ig5-debug.log
-logs/
 *.log
+logs/
+ig5-debug.log
 
-gw/workbuddy2api/.venv/
-gw/workbuddy2api/logs/
-gw/workbuddy2api/.git/
-gw/workbuddy2api/package.json
-**/__pycache__/
-*.pyc
-Thumbs.db
-.DS_Store
-
-# build artifacts
+# ---- build & temp ----
 dist/
 build/
 *.spec
+__pycache__/
+*.pyc
 launcher.log
-frozen_probe.log
-probe2.log
+probe*.log
+
+# ---- deps ----
+gw/workbuddy2api/.venv/
+gw/workbuddy2api/logs/
+gw/workbuddy2api/.git/
+gw/workbuddy2api/__pycache__/
+
+# ---- os ----
+Thumbs.db
+.DS_Store

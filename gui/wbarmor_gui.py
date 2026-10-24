@@ -3,7 +3,21 @@
 from __future__ import annotations
 import os, sys, json, time, threading, subprocess, urllib.request
 
-BASE = r"C:\Users\Administrator\Desktop\wb-armor"
+import sys as _sys
+def _detect_base():
+    # 1) 环境变量优先
+    env = os.environ.get("WBARMOR_ROOT")
+    if env and os.path.isdir(env):
+        return env.rstrip("\\/")
+    # 2) 从本文件向上找含 wbarmor.ps1 或 gw 的目录
+    here = os.path.dirname(os.path.abspath(__file__))
+    for cand in (here, os.path.dirname(here), os.path.dirname(os.path.dirname(here))):
+        if os.path.exists(os.path.join(cand, "wbarmor.ps1")) or os.path.isdir(os.path.join(cand, "gw")):
+            return cand
+    # 3) 回落默认桌面路径
+    return r"C:\Users\Administrator\Desktop\wb-armor"
+
+BASE = _detect_base()
 GW   = os.path.join(BASE, "gw", "workbuddy2api")
 PY   = os.path.join(GW, ".venv", "Scripts", "python.exe")
 HOME = os.path.expanduser("~")
@@ -288,6 +302,7 @@ class App:
         ttk.Button(bar, text="⚡ DSH 探活", command=self.do_dsh_test).pack(side="left", padx=4)
         ttk.Button(bar, text="🎁 免费档探活", command=self.do_oc_test).pack(side="left", padx=4)
         ttk.Button(bar, text="🔧 配置 Codex", command=self.do_setup_codex).pack(side="left", padx=4)
+        ttk.Button(bar, text="🧩 配置 DSH", command=self.do_setup_dsh).pack(side="left", padx=4)
 
         ar = ttk.Frame(self.root); ar.pack(fill="x", padx=14, pady=4)
         ttk.Label(ar, text="模板破甲：").pack(side="left")
@@ -377,6 +392,18 @@ class App:
     def show_payload(self):
         p = os.environ.get("IG5_PAYLOAD") or "C:/Users/Administrator/Desktop/dsh-infinite-gen-5-main/prompts/infinite-gen-5.1-flash.md"
         self.log("载荷:", p, "exists=", os.path.exists(p))
+
+    def do_setup_dsh(self):
+        self.log("== 配置 DeepSeek Harness ==")
+        def work():
+            import subprocess
+            ps1 = os.path.join(BASE, "scripts", "setup-dsh.ps1")
+            if not os.path.exists(ps1):
+                return "缺少 scripts/setup-dsh.ps1"
+            r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1],
+                               capture_output=True, text=True, timeout=60)
+            return (r.stdout or "") + (r.stderr or "")
+        self.bg(work)
 
     def do_setup_codex(self):
         self.log("== 配置 Codex 指向本桥 ==")
