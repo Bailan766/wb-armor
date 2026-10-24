@@ -1,0 +1,632 @@
+# WorkBuddy2API
+
+> WorkBuddy 国际国内多账号反代网关 — 双域独立路由与切换、稳定设备指纹防风控、国内成长任务全自动完成，支持 Codex / Claude Code / DSH 与标准 OpenAI 客户端。
+
+## 🔧 官方客户端指纹模拟
+
+代理请求默认模拟官方客户端的请求特征，避免因流量特征与官方客户端差异过大而触发平台风控（参考[踩坑记录](doc/incident-postmortem-and-hardening-checklist.md)）：
+
+- 请求头按平台对齐官方客户端：国内 `CodeBuddyIDE/4.12.0`（UA、x-ide-*、x-product-* 等）；海外 `WorkBuddy/5.5.2 ... CLI/2.137.1`（x-ide-*、x-product: SaaS、x-stainless-* 等）
+- 会话级 conversation_id 复用，previous_response_id 随会话链式传递
+- b3 追踪链同会话延续；大请求体自动 gzip；max_tokens 与官方一致
+- 国际版发送头为官方真实抓包头集的**子集**：不发送 x-model-id、x-request-trace-id、accept-language、sec-fetch-mode、monitor_httpsendtime、acp-connection-id，并剥离 httpx 默认注入的 accept-encoding——由 `server/test_fingerprint_headers.py::TestIntlOfficialHeaderParity` 回归锁定，官方没有的头绝不会出现
+- 国内版 `x-device-token`：通过环境变量 / `--device-token` 注入（获取方式见[抓包手册](doc/mitm-capture-playbook.md)；一设备一账号，勿共用）
+- 海外版 **不存在** `x-device-token`：官方客户端本身不产该头（已三轮抓包 + 二进制层验证，详见[交接文档](doc/HANDOFF-intl-token.md)），仅需 JWT 认证，无需也无法注入 token
+
+## 项目简介
+
+一个轻量级的本地 API 代理服务，将腾讯 **CodeBuddy（国内版）** 与 **WorkBuddy AI（海外版）** 的底层接口转换为标准的 OpenAI、Anthropic 和 Responses 协议格式。
+
+**同一个 proxy，两个平台，一套模型池：**
+
+- 🇨🇳 **国内 CodeBuddy**（`copilot.tencent.com`）→ GLM-5.3、DeepSeek-V4、Kimi-K3、MiniMax-M3、混元 Hy4 等**国产模型**
+- 🌍 **海外 WorkBuddy AI**（`www.workbuddy.ai`）→ **GPT-5.3-Codex** 等海外模型，外加 GLM / Kimi / 混元 / MiniMax / DeepSeek
+
+两个平台使用**完全相同的认证协议**，因此本项目复用同一套代码，启动参数一键切换。
+国内跑不了的 GPT / Gemini 系列，走海外端口即可使用。
+
+## 项目概览
+
+本项目支持两个平台，同一套代码，通过启动参数切换：
+
+| | 国内版 CodeBuddy | 海外版 WorkBuddy AI |
+|---|---|---|
+| **产品** | CodeBuddy（腾讯云国内） | WorkBuddy AI（腾讯海外） |
+| **后端 Endpoint** | `https://copilot.tencent.com` | `https://www.workbuddy.ai` |
+| **认证 platform** | `VSCode` | `workbuddy-ai` |
+| **Session 文件** | `~/.codebuddy-session.json` | `~/.workbuddy-ai-session.json` |
+| **默认端口** | `8787` | `8788`（自定义） |
+| **模型特点** | 国产模型为主（GLM / DeepSeek / Kimi / MiniMax / MiMo / StepFun / 混元） | GPT-5.3-Codex + StepFun + 与国内共用的国产模型 |
+
+两个平台使用**完全相同的认证协议**（`cli-external-link`，`/v2/plugin/` 前缀），
+因此本项目复用同一套认证与代理逻辑，仅 endpoint / platform / session 不同。
+
+## 目录结构
+
+```
+workbuddy2api/
+├── server/                          # 全部服务端代码
+│   ├── codebuddy_proxy.py           # 主入口（两平台共用）
+│   ├── codebuddy_client_demo.py     # 认证客户端（两平台共用）
+│   ├── workbuddy_ai_client_demo.py  # 海外版独立客户端（登录/测试）
+│   ├── dsml_parser.py               # DSML 工具调用解析
+│   ├── desensitize.py               # 脱敏模块
+│   ├── responses_adapter.py         # Responses API 转换
+│   ├── responses_projection.py      # 消息压缩
+│   ├── projection_metadata.py       # 压缩元数据
+│   ├── anthropic_adapter.py         # Anthropic API 转换
+│   ├── probe_models.py              # 实测探测上游可用模型
+│   ├── clean_logs.py                # 日志清理（默认 dry-run）
+│   ├── install_clean_cron.sh        # 安装 launchd 定时清理
+│   ├── extract_device_token.py      # x-device-token 抓取
+│   └── test_*.py                    # 测试
+├── pyproject.toml
+└── README.md
+```
+
+## ✨ 核心特性
+
+- **双域独立路由与切换** - 国内 CodeBuddy 与海外 WorkBuddy AI 一键切换，独立路由互不干扰
+- **官方客户端指纹模拟** - 请求特征对齐官方 CodeBuddyIDE 客户端（UA、会话 ID 链、previous_response_id 延续、b3 追踪链等）
+- **协议转换** - 支持 OpenAI Chat Completions、Anthropic Messages API 和 Responses 三种标准格式，兼容 Codex / Claude Code / DSH 等主流客户端
+- **脱敏处理** - 内置智能脱敏模块，自动过滤敏感信息（账号、密码、密钥、品牌词、路径等），有效缓解审核误拦
+- **消息压缩** - 智能压缩历史消息，大幅降低 token 使用量（适用于 Codex CLI 等长上下文场景）
+- **工具调用支持** - 完整支持 function calling 和 tool use 特性
+- **DSML 解析** - 自动识别和转换 DSML 格式的工具调用
+- **流式响应** - 支持 SSE 流式输出，实时返回生成内容
+- **多账号管理** - 支持多个登录态隔离，方便工作/个人账号切换
+- **国内成长任务自动化** - 签到等成长任务全自动完成（规划中）
+
+## 安装
+
+推荐使用 [uv](https://docs.astral.sh/uv/)：
+
+```bash
+# 安装 uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 直接运行（uv 会自动安装依赖）
+uv run server/codebuddy_proxy.py
+```
+
+## 快速开始
+
+所有命令均在 `server/` 目录下执行（或用 `uv run server/codebuddy_proxy.py` 从根目录执行）。
+
+### 登录信息
+
+| | 国内版 CodeBuddy | 海外版 WorkBuddy AI |
+|---|---|---|
+| **登录 URL** | `https://copilot.tencent.com/login?platform=VSCode&state={state}` | `https://www.workbuddy.ai/login?platform=workbuddy-ai&state={state}` |
+| **Session 文件** | `~/.codebuddy-session.json` | `~/.workbuddy-ai-session.json` |
+| **认证 platform** | `VSCode` | `workbuddy-ai` |
+
+> 登录流程：proxy 启动时会自动获取 `state` 并打开浏览器，用户完成登录后 token 自动保存到 session 文件。
+
+### 1. 国内版 CodeBuddy（端口 8787）
+
+```bash
+cd server
+
+# 首次使用（浏览器登录）
+uv run codebuddy_proxy.py --login
+
+# 日常使用
+uv run codebuddy_proxy.py --desensitize
+```
+
+默认监听 `http://127.0.0.1:8787`
+
+### 2. 海外版 WorkBuddy AI（端口 8788）
+
+```bash
+cd server
+
+# 首次使用（浏览器登录）
+uv run codebuddy_proxy.py --port 8788 \
+  --endpoint https://www.workbuddy.ai \
+  --platform workbuddy-ai \
+  --session-file ~/.workbuddy-ai-session.json \
+  --login
+
+# 日常使用
+uv run codebuddy_proxy.py --port 8788 \
+  --endpoint https://www.workbuddy.ai \
+  --platform workbuddy-ai \
+  --session-file ~/.workbuddy-ai-session.json \
+  --log-file logs/proxy-intl.jsonl
+```
+
+监听 `http://127.0.0.1:8788`（自定义）
+
+### 3. 验证
+
+```bash
+# 国内
+curl http://127.0.0.1:8787/health
+curl http://127.0.0.1:8787/v1/models
+
+# 海外
+curl http://127.0.0.1:8788/health
+curl http://127.0.0.1:8788/v1/models
+```
+
+### 4. 接入客户端
+
+#### Codex CLI
+
+编辑 `~/.codex/config.toml`：
+
+```toml
+[model_providers.codebuddy]
+name = "CodeBuddy (via local proxy)"
+base_url = "http://127.0.0.1:8787/v1"
+wire_api = "responses"
+
+[profiles.codebuddy]
+model = "glm-5.3"
+model_provider = "codebuddy"
+```
+
+#### Claude Code + CC Switch
+
+在 CC Switch 配置中添加：
+
+```json
+{
+  "DeepSeek-V4": {
+    "base_url": "http://127.0.0.1:8787",
+    "api_key": "",
+    "model": "deepseek-v4-pro"
+  }
+}
+```
+
+> ⚠️ `base_url` 填到端口即可，**不要带 `/v1/messages`**。CC Switch 会自己拼 `/v1/messages`，
+> 若 base_url 已含该路径会变成 `/v1/messages/v1/messages` 导致 404。
+>
+> proxy 不实现 Anthropic 官方的模型列举接口（`GET /v1/messages` 返回 405），
+> 所以 CC Switch 的"获取模型列表"按钮可能拿不到结果 —— 手动填写 `model` 字段即可正常工作。
+
+#### 其他 OpenAI 兼容客户端
+
+- Base URL: `http://127.0.0.1:8787/v1`（国内）或 `http://127.0.0.1:8788/v1`（海外）
+- API Key: 留空
+- 模型名见下方模型列表
+
+## 模型列表
+
+### 国内版 CodeBuddy（34 个，逐个实测可用）
+
+| 模型 ID | 显示名 | 厂商 |
+|---|---|---|
+| `auto` | Auto | codebuddy |
+| `default` | Default | codebuddy |
+| `fast-model` | Fast | codebuddy |
+| `balanced-model` | Balanced | codebuddy |
+| `deep-model` | Deep | codebuddy |
+| `hy4-preview` | Hy4 preview | tencent |
+| `hy4-preview-f` | Hy4 preview | tencent |
+| `hy3` | Hy3 | tencent |
+| `hy3-x` | Hy3 | tencent |
+| `hunyuan-chat` | Hunyuan-Turbos | tencent |
+| `glm-5.3` | GLM-5.3 | zhipu |
+| `glm-5.3-flash` | GLM-5.3-flash | zhipu |
+| `glm-5.3-flashx` | GLM-5.3-FlashX | zhipu |
+| `glm-5.2` | GLM-5.2 | zhipu |
+| `glm-5.1` | GLM-5.1 | zhipu |
+| `glm-5v-turbo` | GLM-5v-Turbo | zhipu |
+| `kimi-k3` | Kimi-K3 | moonshot |
+| `kimi-k3-1` | Kimi-K3.1 | moonshot |
+| `kimi-k2.8-preview` | Kimi-K2.8-Preview | moonshot |
+| `kimi-k2.7` | Kimi-K2.7-Code | moonshot |
+| `kimi-k2.6` | Kimi-K2.6 | moonshot |
+| `kimi-k2.5` | Kimi-K2.5 | moonshot |
+| `minimax-m3` | MiniMax-M3 | minimax |
+| `minimax-m3.1-flash` | MiniMax-M3.1-Flash | minimax |
+| `minimax-m2.7` | MiniMax-M2.7 | minimax |
+| `mimo-v2.6-pro` | Xiaomi MiMo-V2.6-Pro | xiaomi |
+| `step-5-preview` | Step-5-Preview | stepfun |
+| `space-bunny` | Space-Bunny | tencent |
+| `deepseek-v4-pro` | Deepseek-V4-Pro | deepseek |
+| `deepseek-v4-flash` | Deepseek-V4-Flash | deepseek |
+| `deepseek-v4.1-flash` | Deepseek-V4.1-Flash | deepseek |
+| `codewise-rewrite` | codewise-rewrite | tencent |
+| `codewise-jump` | codewise-jump | tencent |
+| `nes-gf` | nes-gf | tencent |
+
+> `glm-5.1` 必须携带 `reasoning_effort`（proxy 会自动补 `medium`），
+> 否则上游返回 `code 11150`。它会先输出推理内容，`max_tokens` 过小可能只得到空回复。
+
+### 海外版 WorkBuddy AI（23 个，逐个实测可用）
+
+> 以下为 `personal_free_user` 免费账号实测可用的模型。
+> 免费账号下 GPT-5.6 / GPT-6 / GPT-5.5 / GPT-5.4 / Gemini / Grok / `primary-model`
+> 会被拒（`code 11158 not allowed for user type`）；`deep-model` 等已下线（`code 11102`）。
+
+| 模型 ID | 显示名 | 厂商 |
+|---|---|---|
+| `default-model` | Auto | codebuddy |
+| `fast-model` | Fast | codebuddy |
+| `balanced-model` | Balanced | codebuddy |
+| `auto` | Auto | codebuddy |
+| `hy4-preview` | Hy4 preview | tencent |
+| `hy4-preview-f` | Hy4 preview | tencent |
+| `hy3` | Hy3 | tencent |
+| `gpt-5.3-codex` | GPT-5.3-Codex | openai |
+| `glm-5.3` | GLM-5.3 | zhipu |
+| `glm-5.3-flash` | GLM-5.3-Flash | zhipu |
+| `glm-5.2` | GLM-5.2 | zhipu |
+| `glm-5.1` | GLM-5.1 | zhipu |
+| `glm-5v-turbo` | GLM-5v-Turbo | zhipu |
+| `kimi-k3` | Kimi-K3 | moonshot |
+| `kimi-k2.8-preview` | Kimi-K2.8-Preview | moonshot |
+| `kimi-k2.7` | Kimi-K2.7-Code | moonshot |
+| `kimi-k2.6` | Kimi-K2.6 | moonshot |
+| `kimi-k2.5` | Kimi-K2.5 | moonshot |
+| `minimax-m3` | MiniMax-M3 | minimax |
+| `minimax-m3.1-flash` | MiniMax-M3.1-Flash | minimax |
+| `space-bunny` | Space-Bunny | tencent |
+| `step-5-preview` | Step-5-Preview | stepfun |
+| `deepseek-v4.1-flash` | Deepseek-V4.1-Flash | deepseek |
+
+> 模型列表会随平台更新变化，以 `GET /v1/models` 的实际返回为准。
+
+#### 海外版 id 带 credits 倍率
+
+海外版 `/v1/models` 实时同步上游 `/v3/config`（缓存 10 分钟，`?refresh=1` 强制刷新），
+返回的 id 会附倍率后缀，方便按成本选模型：
+
+```
+fast-model (x0.34)      balanced-model (x3.31)   primary-model
+deepseek-v4.1-flash (x0.00)                      ← 免费
+step-5-preview (x0.00)                           ← 免费
+gpt-6-sol (x1.33)        gpt-6-astra (x6.67)     gemini-3.8-flash (x0.95)
+```
+
+proxy 转发时会自动把倍率后缀剥回真实 id（`fast-model (x0.34)` → `fast-model`），
+所以客户端把带后缀的 id 原样回传也能正常工作。
+
+> ⚠️ **实时列表会把不可用的模型也列出来**。上游 `/v3/config` 不按账号权限过滤，
+> 免费账号会看到 `gpt-6-*`、`gemini-3.8-flash`、`grok-4.7`、`primary-model` 等，
+> 选中后调用才报 `11158`。上表是实测可用的子集。
+
+### 探测上游可用模型
+
+国内版 `/v1/models` 用硬编码列表，海外版实时同步上游 `/v3/config`。
+用 `probe_models.py` 逐个发真实请求来验证/更新：
+
+```bash
+# 先启动 proxy，再探测
+uv run server/probe_models.py                       # 国内版（8787）
+uv run server/probe_models.py --port 8788           # 海外版（8788）
+uv run server/probe_models.py --extra "glm-9.9"     # 追加自定义候选
+uv run server/probe_models.py --from-config         # 顺便从云端配置收集候选
+```
+
+输出会按可用/不可用分组，并标注上游错误码：
+
+| 错误码 | 含义 |
+|---|---|
+| `11102` | `service info not found` —— 模型不存在或已下线 |
+| `11158` | `not allowed for user type` —— 账号权限不足（免费账号用不了 GPT/Gemini） |
+| `11103` | 后端不支持该调用方式（如图像模型走 chat） |
+| `11134` | 上游临时不可用，稍后重试 |
+| `11150` | `reasoning effort` 不支持 —— `glm-5.1` 假失败，proxy 会自动补参数 |
+
+> ⚠️ **`/v3/config?repos=` 的 `models` 不能直接当可用列表**。实测云端会列出已下线的条目
+> （海外版返回 `auto-chat`、`o4-mini`、`enhance-1.0`，调用全部 `11102`），也会漏掉实际可用的
+> 模型（云端配置里没有 GLM / Kimi / DeepSeek）。反之 `gpt-5.6-*` 未出现在云端配置中，
+> 但在付费账号下可用。**唯一可靠方式是实测。**
+
+<details>
+<summary>手动拉取云端配置</summary>
+
+```bash
+# 海外版
+uv run server/workbuddy_ai_client_demo.py --config
+
+# 国内版（注意 User-Agent 必须是 CodeBuddyIDE/<version>，
+# 否则返回 HTTP 400 code 12403 check ua）
+uv run python -c "
+import sys; sys.path.insert(0, 'server')
+from codebuddy_client_demo import CodeBuddyClient
+c = CodeBuddyClient('https://copilot.tencent.com')
+c.ensure_authenticated(open_browser=False)
+h = {'User-Agent': 'CodeBuddyIDE/4.10.33259736', 'X-Product': 'SaaS',
+     'X-IDE-Type': 'VSCode', 'X-IDE-Name': 'VSCode',
+     'X-IDE-Version': '1.70.2', 'X-Product-Version': '4.10.33259736'}
+cfg = c._unwrap(c._request('GET', '/v3/config?repos=', headers={**h, **c.auth_headers()}))
+for m in cfg.get('models') or []: print(' ', m.get('id'), '|', m.get('name'))
+"
+```
+
+</details>
+
+## 命令行参数
+
+```bash
+--host HOST              监听地址（默认 127.0.0.1）
+--port PORT              监听端口（默认 8787）
+--endpoint ENDPOINT      后端地址（国内默认 copilot.tencent.com，海外用 www.workbuddy.ai）
+--platform PLATFORM      认证 platform（国内 VSCode，海外 workbuddy-ai）
+--session-file PATH      会话文件路径
+--log-file PATH          JSONL 日志文件
+--desensitize            启用脱敏处理（推荐）
+--optimize-context       启用消息压缩优化（Codex CLI 推荐）
+--login                  启动时执行浏览器登录
+--no-browser             登录时不打开浏览器
+--verbose-llm            记录完整请求/响应内容（默认仅摘要）
+--mock-dir DIR           使用 mock 数据（测试用）
+--device-token PATH      x-device-token 注入（仅国内版有效）：裸 token / JSON 文件路径
+                         （也可用环境变量 CODEBUDDY_DEVICE_TOKEN；
+                           获取方式见 doc/mitm-capture-playbook.md §7。
+                           海外版客户端不产 x-device-token，此参数对
+                           workbuddy-ai 平台无效）
+--rate-qps FLOAT         全局限速：持续 QPS（默认 1.0，0 不限速）
+--rate-burst INT         全局限速：突发容量（默认 5，超出排队）
+--rate-jitter FLOAT      每请求随机抖动上限（秒，默认 3.0，0 关闭）
+--credit-burn-threshold  消耗速率告警阈值（默认 0.3 = 窗口消耗占剩余额度 30%）
+```
+
+### 环境变量
+
+```bash
+CODEBUDDY_PROXY_HOST      # 等同 --host
+CODEBUDDY_PROXY_PORT      # 等同 --port
+CODEBUDDY_ENDPOINT        # 等同 --endpoint
+CODEBUDDY_PLATFORM        # 等同 --platform
+CODEBUDDY_PROXY_LOG_FILE  # 等同 --log-file
+```
+
+## API 接口
+
+所有接口默认不需要在请求中额外携带 token，代理会使用本地 session 完成认证。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/health` | 查询本地服务、认证状态与限速器状态 |
+| GET | `/v1/models` | 查询模型列表 |
+| POST | `/v1/chat/completions` | OpenAI Chat Completions，支持 tools 和流式响应 |
+| POST | `/v1/responses` | Responses API，兼容 Codex CLI |
+| POST | `/v1/messages` | Anthropic Messages API，兼容 Claude Code / CC Switch |
+| GET | `/v1/credits` | 额度查询（缓存 60s，`?refresh=1` 强刷）+ 消耗速率告警 |
+| GET/DELETE | `/v1/breaker` | 熔断状态查看 / 按 `?model=` 手动清除 |
+
+### `/v1/chat/completions` - OpenAI Chat
+
+**非流式请求：**
+
+```bash
+curl http://127.0.0.1:8787/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "deepseek-v4-flash",
+    "messages": [{"role": "user", "content": "写一个快排"}]
+  }'
+```
+
+**流式请求：**
+
+```bash
+curl -N http://127.0.0.1:8787/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "glm-5.2",
+    "stream": true,
+    "messages": [{"role": "user", "content": "hi"}]
+  }'
+```
+
+支持 `tools`、`tool_choice`、`stream_options` 等完整 OpenAI 特性。
+
+### `/v1/responses` - Responses API
+
+用于兼容 Codex CLI：
+
+```bash
+curl http://127.0.0.1:8787/v1/responses \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "default",
+    "input": "写一个快排"
+  }'
+```
+
+支持 `instructions` (system prompt)、消息形式的 `input`、`tools`、`tool_choice` 和 `stream`。
+
+**💡 提示：** 使用 `--optimize-context` 可大幅减少 Codex CLI 的 token 使用。
+
+### `/v1/messages` - Anthropic Messages
+
+用于兼容 Claude Code / CC Switch：
+
+```bash
+curl http://127.0.0.1:8787/v1/messages \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "deepseek-v4-pro",
+    "max_tokens": 4096,
+    "messages": [{"role": "user", "content": "hi"}]
+  }'
+```
+
+设置 `"stream": true` 时返回 Anthropic SSE 事件流。
+
+## 高级功能
+
+### 脱敏处理 (`--desensitize`)
+
+对 system 消息中的敏感词插入零宽空格（U+200B），打断后端关键词匹配，缓解合规模板被审核误拦。
+
+#### 何时需要使用
+
+**强烈推荐启用的场景：**
+
+1. **对接 Claude Code / CC Switch**
+   - Claude Code 的 system prompt 包含大量品牌词和安全合规声明
+   - 后端可能将竞争品牌词视为敏感内容
+   - 不启用脱敏时，几乎每次请求都会被审核拦截
+
+2. **对接 Codex CLI 等 agentic 工具**
+   - 这些工具的 system prompt 含有大量安全术语（DoS、exploit、credential testing 等）
+   - 即使是合规的"拒绝有害请求"声明，也可能被关键词匹配误拦
+
+**不需要启用的场景：**
+- ✅ 普通对话（无安全术语）
+- ✅ 纯粹的代码生成（无品牌词/安全声明）
+
+#### 注意事项
+
+- ✅ 只处理合规声明，不绕过对有害输入的审核
+- ✅ 只改 system 消息，真实用户输入保持原样
+- ⚠️ 零宽空格对人眼/模型透明，但会影响精确字符串匹配
+
+---
+
+### 消息压缩优化 (`--optimize-context`)
+
+仅对 `/v1/responses` 端点生效，将长历史、大 schema、超长工具输出压缩成"最小语义闭包"，大幅减少 token 使用（可能减少 60-90%）。
+
+```bash
+# 同时启用两个功能（推荐用于 Codex CLI）
+uv run codebuddy_proxy.py --desensitize --optimize-context
+```
+
+- ✅ 只用于 `/v1/responses`，不影响 chat/messages 端点
+- ✅ 保留语义闭包，模型仍可推理
+- ⚠️ 历史被摘要化，精确细节需重新运行工具获取
+
+---
+
+### 日志
+
+```bash
+# 实时查看
+tail -f logs/codebuddy-proxy.jsonl
+
+# 查看流式事件
+tail -100 logs/codebuddy-proxy.jsonl | jq 'select(.event | startswith("stream"))'
+```
+
+| 文件 | 内容 | 轮转 |
+|---|---|---|
+| `logs/proxy.log` | 滚动日志（启动信息、诊断） | 按天分片，保留 30 天 |
+| `logs/proxy.log.YYYY-MM-DD` | 历史分片 | 见下方清理脚本 |
+| `logs/codebuddy-proxy.jsonl` | CN 版请求日志（`--log-file` 默认值） | **无轮转** |
+| `logs/proxy-intl.jsonl` | 海外版请求日志 | **无轮转** |
+| `logs/*-start.log` | stdout 重定向 | 无 |
+
+> ⚠️ `.jsonl` 没有轮转，长时间运行会涨到几百 MB，需靠下面的脚本清理。
+>
+> ⚠️ `proxy.log.*` 分片的**文件名日期不可信** —— `TimedRotatingFileHandler`
+> 的 suffix 计算有 off-by-one，可能出现 `proxy.log.2026-10-05` 里装的却是
+> 10-20 的数据。判断新旧一律以 mtime 为准。
+
+### 清理日志
+
+```bash
+uv run server/clean_logs.py                    # 预览（默认，不做任何修改）
+uv run server/clean_logs.py --apply            # 执行
+uv run server/clean_logs.py --retain-days 14   # 保留两周
+uv run server/clean_logs.py --no-rotate        # 只删过期，不动大文件
+```
+
+清理策略：
+
+1. 删除修改时间早于 `--retain-days`（默认 7 天）的 `proxy.log.*` 分片
+2. 删除早于保留期、且未被运行中进程占用的 `*.jsonl`
+3. 对仍在写入但超过 `--max-size-mb`（默认 100MB）的活动 `*.jsonl`，
+   gzip 归档后截断
+
+安全约束：默认 dry-run；**任何正被写入的文件绝不删除**（判据是「被进程占用」
+或「最近 N 分钟改过」，proxy 每次写 jsonl 都会开关文件，所以 lsof 抓不到，
+必须靠 mtime）。
+
+#### 定时清理（macOS launchd）
+
+```bash
+server/install_clean_cron.sh install     # 安装 + 立即触发一次验证
+server/install_clean_cron.sh status      # 查看状态与最近清理日志
+server/install_clean_cron.sh uninstall   # 卸载
+```
+
+默认每天 04:00 执行 `clean_logs.py --apply --retain-days 7 --max-size-mb 100`，
+输出写到 `logs/clean.log`。脚本会按当前项目和用户名动态生成 plist，
+装在 `~/Library/LaunchAgents/`，登录时自动加载。
+
+> 用 launchd 而非 crontab：macOS 上 crontab 需要「完整磁盘访问」权限，且机器休眠会漏跑；
+> `StartCalendarInterval` 漏跑后开机能补一次。
+>
+> 想改频率/保留期就编辑 `server/install_clean_cron.sh` 顶部的 `HOUR` / `MINUTE` /
+> `RETAIN_DAYS` / `MAX_SIZE_MB`，重新 `install` 即可（会先卸载旧的）。
+
+## 常见问题
+
+### 找不到 session 文件 / 401 认证失败
+
+重新登录：
+
+```bash
+# 国内
+uv run codebuddy_proxy.py --login
+
+# 海外
+uv run codebuddy_proxy.py --port 8788 --endpoint https://www.workbuddy.ai --platform workbuddy-ai --session-file ~/.workbuddy-ai-session.json --login
+```
+
+### 端口被占用
+
+```bash
+lsof -i :8787
+uv run codebuddy_proxy.py --port 8789
+```
+
+### 海外版调用报错 "first message is not system prompt"
+
+proxy 已自动处理（会自动补 system 首条消息），如仍有问题请更新到最新代码。
+
+### 非流式请求报 "empty or malformed response (HTTP 200)"
+
+Claude Code 等客户端在**已有项目**（超长上下文）里偶发：
+
+```
+API returned an empty or malformed response (HTTP 200) — body is an event stream
+(the non-streaming request was answered with a stream), 0 stream events received
+```
+
+上游对超长上下文的非流式请求会秒拒，返回 HTTP 200 但**一帧都不给**；新开对话上下文小则正常。proxy 已做两层兜底（两端通用）：
+
+- **非 SSE 兜底**：上游若回的是普通 JSON（`content-type` 非 `text/event-stream`），整体读入解析成标准响应，而不是逐行等 `data:` 最后交出空响应
+- **瞬时拒绝重试**：HTTP 200 但零帧时换模型重试一次；重试**复用同一份会话 / trace 身份**（换模型不换会话，避免上游判成多个并发会话），并清掉上一轮的 `previous_response_id`
+
+回归测试：`server/test_nonstream_hardening.py`。
+
+## 技术细节
+
+- **架构**: FastAPI + httpx（异步）
+- **并发**: 支持 1000+ 并发请求
+- **流式**: 完整的流式日志（started / progress / completed / timeout）
+- **认证协议**: `cli-external-link`（浏览器 SSO 登录 → 轮询 token → 自动刷新）
+- **请求头指纹**: 按平台对齐真实抓包（国内 CodeBuddyIDE/4.12.0、海外 WorkBuddy/5.5.2）；海外版仅发送官方头集子集的头，httpx 默认的 accept-encoding 在发送前剥离，避免任何非指纹头被上游侧记录
+
+## 测试
+
+```bash
+uv run pytest server/test_*.py -v
+```
+
+## 多用户安全须知
+
+- **一设备一账号**（仅国内版）：国内 `x-device-token` 与账号是「设备 + 账号」绑定关系。多个账号共用同一个 token 会被平台做**设备关联**，触发连坐封号——每台设备只能用自己的 token。海外版无 device token，不涉及此约束
+- 国内 token / session 文件位于 `~/.codebuddy-device-token.json` 与 `~/.codebuddy-session.json`（已被 `.gitignore` 的 `*device-token*.json`、`*session*.json` 规则排除，**不会入库**）
+- 请勿分享自己的国内 token，也请勿使用他人分享的 token——被关联的是一整台设备，换号也救不回来
+
+## 免责声明
+
+**本项目仅用于个人学习与研究。** 与腾讯、WorkBuddy、CodeBuddy、OpenAI、Anthropic 无官方关联。请仅在你合法拥有订阅的前提下使用，并自行承担风险。
+
+- 本项目不提供任何形式的担保
+- 使用本项目产生的任何后果由使用者自行承担
+- 请勿将本项目用于任何违反相关服务条款的用途
+- 请勿将本项目用于商业用途

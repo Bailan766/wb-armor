@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 虚拟环境
+.venv/
+.venv_fastapi/
+venv/
+ENV/
+env/
+
+# uv
+.uv/
+uv.lock
+
+# 日志
+logs/
+*.log
+*.jsonl
+
+# Mock data (may contain sensitive info)
+fixtures/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 测试
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 构建
+dist/
+build/
+*.egg-info/
+
+# 临时文件
+*.tmp
+.DS_Store
+# 将 CODE_REVIEW md 文档添加到 .gitignore
+CODE_REVIEW_*.md
+
+# 会话/凭证（绝不能提交）
+*session*.json
+*session*.json.backup
+
+# 工具私有目录
+.ydevsphere/
+opencode/
+.kilocode/
+
+# 个人笔记
+about-me.md
+self-introduction.md
+*device-token*.json

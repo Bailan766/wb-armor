@@ -1,0 +1,26 @@
+# ---- secrets / runtime ----
+.workbuddy-ai-session.json
+*.session.json
+.payload
+*.log
+logs/
+ig5-debug.log
+
+# ---- build & temp ----
+dist/
+build/
+*.spec
+__pycache__/
+*.pyc
+launcher.log
+probe*.log
+
+# ---- deps ----
+gw/workbuddy2api/.venv/
+gw/workbuddy2api/logs/
+gw/workbuddy2api/.git/
+gw/workbuddy2api/__pycache__/
+
+# ---- os ----
+Thumbs.db
+.DS_Store

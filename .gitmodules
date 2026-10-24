@@ -1,0 +1,3 @@
+[submodule "gw/workbuddy2api"]
+	path = gw/workbuddy2api
+	url = https://github.com/Zhengyuuuui/workbuddy2api.git
