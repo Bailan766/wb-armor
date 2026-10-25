@@ -1,4 +1,4 @@
-﻿# start-all.ps1 - bring up 8788 (proxy) -> 4097 (opencode serve) -> 8792 (free shim) -> 8790 (IG5 bridge)
+# start-all.ps1 - bring up 8788 (proxy) -> 4097 (opencode serve) -> 8792 (free shim) -> 8790 (IG5 bridge)
 # Every attempt writes JSONL into logs\launcher.log and per-service stdout/stderr into logs\<port>.out.log|.err.log
 
 $ErrorActionPreference = 'SilentlyContinue'
@@ -50,22 +50,26 @@ if (-not (Up 8788) -and (Test-Path $PY)) {
   Write-Log -Comp launcher -Level (if_ok (Up 8788)) -Msg 'start.8788' -Extra @{ up = [int](Up 8788) }
 }
 
-# 4097 opencode serve (npm shim -> cmd /c)
-if (-not (Up 4097)) {
-  $oc = $null
-  foreach ($cand in @("$env:APPDATA\npm\opencode.cmd", (Get-Command opencode.cmd -ErrorAction SilentlyContinue).Source)) {
-    if ($cand -and (Test-Path $cand)) { $oc = $cand; break }
+# 4097 opencode serve：只有 Codex 链路需要，默认不起（$env:WB_CODEX=1 才拉）
+if ($env:WB_CODEX -eq '1') {
+  if (-not (Up 4097)) {
+    $oc = $null
+    foreach ($cand in @("$env:APPDATA\npm\opencode.cmd", (Get-Command opencode.cmd -ErrorAction SilentlyContinue).Source)) {
+      if ($cand -and (Test-Path $cand)) { $oc = $cand; break }
+    }
+    if ($oc) {
+      Start-Process -FilePath 'cmd.exe' -WindowStyle Hidden -RedirectStandardOutput (OutLog 4097) -RedirectStandardError (ErrLog 4097) `
+        -ArgumentList @('/c', $oc, 'serve', '--port', '4097', '--hostname', '127.0.0.1')
+    } else {
+      Write-Log -Comp launcher -Level warn -Msg 'opencode.missing' -Extra @{ hint = 'npm i -g opencode-ai' }
+      schtasks /Run /TN OC4097 | Out-Null
+    }
   }
-  if ($oc) {
-    Start-Process -FilePath 'cmd.exe' -WindowStyle Hidden -RedirectStandardOutput (OutLog 4097) -RedirectStandardError (ErrLog 4097) `
-      -ArgumentList @('/c', $oc, 'serve', '--port', '4097', '--hostname', '127.0.0.1')
-  } else {
-    Write-Log -Comp launcher -Level warn -Msg 'opencode.missing' -Extra @{ hint = 'npm i -g opencode-ai' }
-    schtasks /Run /TN OC4097 | Out-Null
-  }
+  Start-Sleep -Seconds 4
+  Write-Log -Comp launcher -Level (if_ok (Up 4097)) -Msg 'start.4097' -Extra @{ up = [int](Up 4097) }
+} else {
+  Write-Log -Comp launcher -Level info -Msg 'skip.4097' -Extra @{ hint = 'set WB_CODEX=1 for Codex path' }
 }
-Start-Sleep -Seconds 4
-Write-Log -Comp launcher -Level (if_ok (Up 4097)) -Msg 'start.4097' -Extra @{ up = [int](Up 4097) }
 
 # node absolute path
 $node = 'C:\Program Files\nodejs\node.exe'

@@ -44,9 +44,10 @@ const note = (req, code) => {
   LOG.push(`${new Date().toISOString()} ${req.method} ${url} -> ${code}`);
   if (LOG.length > 200) LOG.shift();
   const post = req && req.method === 'POST';
-  if (post && url.includes('/responses')) { STATS.routes.responses += 1; STATS.lastStatus = code; }
+  if (post && url.includes('/responses')) STATS.routes.responses += 1;
   else if (post && url.includes('/chat/completions')) STATS.routes.chat += 1;
   else if (post && url.includes('/messages')) STATS.routes.messages += 1;
+  if (post) STATS.lastStatus = code;   // 三条路由都写，别只认 /responses
 };
 const json = (res, code, obj, req) => { const b = JSON.stringify(obj); res.writeHead(code, { ...CORS, 'content-type': 'application/json', 'content-length': Buffer.byteLength(b) }); res.end(b); if (req) note(req, code); };
 const readBody = async (req) => { const c = []; for await (const x of req) c.push(x); return Buffer.concat(c).toString('utf8'); };
@@ -78,7 +79,8 @@ const server = http.createServer(async (req, res) => {
       ok: true, upstream: UP, payload_chars: PAYLOAD.length,
       payload_source: process.env.IG5_PAYLOAD ? 'env' : (PAYLOAD_PATH.includes('vendor') ? 'bundled' : 'file'),
       payload_path: PAYLOAD_PATH,
-      served: STATS.served, fallbacks: STATS.fallbacks, served_by_route: STATS.routes,
+      served: STATS.routes.responses + STATS.routes.chat + STATS.routes.messages,
+      fallbacks: STATS.fallbacks, served_by_route: STATS.routes,
       last_model: STATS.lastModel, last_status: STATS.lastStatus,
       recent: LOG.slice(-10)
     }, req);
@@ -162,11 +164,31 @@ const server = http.createServer(async (req, res) => {
             const passthrough = /^(event:|data:)/.test(s0);
             log.info('upstream.first', { rid, ms: Date.now() - t0, status: up.status, bytes: s0.length, passthrough });
             if (passthrough) {
-              res.writeHead(200, { ...CORS, 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+              res.writeHead(200, { ...CORS, 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-ig5-rid': rid });
               note(req, 200);
               res.write(s0);
-              if (s0.includes('"response.completed"')) { /* 首块即完成（极短回复） */ }
-              for (;;) { const n = await reader.read(); if (n.done) break; res.write(Buffer.from(n.value)); }
+              let tail = s0.slice(-96), broke = null;
+              try {
+                for (;;) {
+                  const n = await reader.read();
+                  if (n.done) break;
+                  res.write(Buffer.from(n.value));
+                  tail = (tail + Buffer.from(n.value).toString('utf8')).slice(-96);
+                }
+              } catch (e) {
+                broke = e;
+              }
+              const terminal = tail.includes('response.completed') || tail.includes('response.failed') || tail.includes('response.incomplete');
+              if (broke || !terminal) {
+                // 半条流：头部已发，只能补终止事件；绝不能落到下面的合成分支（二次 writeHead）
+                log.error('responses.stream.incomplete', { rid, broke: String((broke && broke.message) || broke || ''), tail: tail.slice(-80) });
+                try {
+                  res.write('event: response.failed\ndata: ' + JSON.stringify({
+                    type: 'response.failed',
+                    response: { id: rid, object: 'realtime.response', status: 'failed', error: { type: 'upstream_stream_broken', message: 'upstream stream interrupted' } }
+                  }) + '\n\n');
+                } catch { }
+              }
               dbg('=== UP STREAM passthrough ok ===\n');
               return res.end();
             }
@@ -232,19 +254,50 @@ const server = http.createServer(async (req, res) => {
       body.model = body.model || 'deepseek-v4.1-flash';
       const sys = typeof body.system === 'string' ? body.system : (Array.isArray(body.system) ? body.system.map((x) => x.text || '').join('') : '');
       body.system = PAYLOAD + (sys ? '\n\n' + sys : '');
+      const rid = log.rid();
       let up, txt = '';
       try {
         up = await fetch(UP + '/messages', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
         if (up.ok) {
           if (body.stream) {
-            res.writeHead(200, { ...CORS, 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+            res.writeHead(200, { ...CORS, 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-ig5-rid': rid });
             note(req, 200);
-            for await (const c of up.body) res.write(c);
+            let tail = '', aborted = null;
+            try {
+              for await (const c of up.body) {
+                res.write(c);
+                tail = (tail + Buffer.from(c).toString('utf8')).slice(-96);
+              }
+            } catch (e) {
+              aborted = e;
+            }
+            if (aborted) log.error('messages.stream.abort', { rid, msg: String((aborted && aborted.message) || aborted) });
+            // 断流或流里没有终止事件，都算半条流：补一个 error 事件，别让客户端
+            // 拿着「tool_use 已 start、永不 complete」的历史去发下一轮（上游回 11148）
+            if (aborted || !tail.includes('message_stop')) {
+              log.error('messages.stream.incomplete', { rid, tail: tail.slice(-60) });
+              try {
+                res.write('event: error\ndata: ' + JSON.stringify({
+                  type: 'error', error: { type: 'upstream_stream_broken', message: 'upstream stream interrupted' }
+                }) + '\n\n');
+              } catch { }
+            }
             return res.end();
           }
           return json(res, 200, await up.json(), req);
         }
-      } catch { }
+        log.error('messages.upstream', { rid, status: up.status });
+      } catch (e) {
+        log.error('messages.upstream.throw', { rid, msg: String((e && e.message) || e) });
+      }
+      // 头已发过就绝不再走兜底：二次 writeHead 抛 ERR_HTTP_HEADERS_SENT，连接被硬断
+      if (res.headersSent) return res.end();
+      // 带 tool_result 的轮次禁止用兜底文本顶替（假 assistant 会把历史写歪，照样 11148）
+      const hasToolResult = (Array.isArray(body.messages) ? body.messages : [])
+        .some((m) => Array.isArray(m && m.content) && m.content.some((b) => b && b.type === 'tool_result'));
+      if (hasToolResult) {
+        return json(res, 502, { type: 'error', error: { type: 'upstream_unavailable', message: 'tool_result turn must not be answered by fallback' } }, req);
+      }
       // fallback: opencode free tier, repackaged as an Anthropic message
       const msgs = (Array.isArray(body.messages) ? body.messages : []).map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: toText(m) }));
       txt = await askOpencode(process.env.OC_MODEL || 'deepseek-v4.1-flash-free', [{ role: 'system', content: PAYLOAD }, ...msgs].slice(-10));
@@ -292,7 +345,12 @@ const server = http.createServer(async (req, res) => {
       if (up && up.ok && body.stream) {
         res.writeHead(up.status, { ...CORS, 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-ig5-rid': rid });
         note(req, up.status);
-        for await (const c of up.body) res.write(c);
+        try {
+          for await (const c of up.body) res.write(c);
+        } catch (e) {
+          log.error('chat.stream.abort', { rid, msg: String((e && e.message) || e) });
+          try { res.write('data: ' + JSON.stringify({ error: { type: 'upstream_stream_broken', message: 'upstream stream interrupted' } }) + '\n\n'); } catch { }
+        }
         return res.end();
       }
       if (up && up.ok) return json(res, up.status, await up.json(), req);

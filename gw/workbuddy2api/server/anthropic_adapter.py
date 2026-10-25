@@ -132,12 +132,11 @@ def _convert_anthropic_message(msg: dict) -> list[dict]:
                     "content": str(result_content),
                 })
         
-        # 添加user文本消息
+        # tool 结果必须紧跟 assistant(tool_calls)：OpenAI/DeepSeek 在中间夹一条
+        # user 文本就会报 11148 tool calls and tool results do not match。
+        messages.extend(tool_results)
         if text_parts:
             messages.append({"role": "user", "content": "\n".join(text_parts)})
-        
-        # 添加tool结果消息
-        messages.extend(tool_results)
     
     # 其他角色（system等）
     else:

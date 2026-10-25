@@ -28,7 +28,8 @@ DSH_HEADLESS = HOME / ".dsh" / "profiles" / "headless" / "cordis.patch.yml"
 DSH_SAMPLE_WEB = ROOT / "config" / "dsh-proxy.patch.yml"
 BRIDGE = "http://127.0.0.1:8790"
 OC_BRIDGE = "http://127.0.0.1:8792"
-PORTS = {"8788": "proxy", "4097": "opencode", "8792": "free-shim", "8790": "bridge"}
+PORTS = {"8788": "proxy", "8790": "bridge", "8792": "free-shim"}
+OPTIONAL_PORTS = {"4097": "opencode"}
 CANARY = "WB-ARMOR-7F3A"
 
 # 破甲段（内置）：部署 Codex catalog / DSH profile 时统一注入，避免依赖历史文件
@@ -251,10 +252,11 @@ def ensure_catalog_armor() -> str:
 # ---------------------------------------------------------------- deploy: dsh
 def _dsh_yaml(armor: bool = True, insert: bool = False) -> str:
     """DSH patch 层必须是「顶层 YAML 数组 + id/config 条目」；写成 mapping 会直接报
-    `must be a top-level YAML array of loader patch entries`，整个 profile 起不来。"""
+    `must be a top-level YAML array of loader patch entries`，整个 profile 起不来。
+    带 begin/end 标记，便于重复部署时只替换本块、保留用户其它条目。"""
     persona = ARMOR_OFF_TEXT if armor else "You are a helpful assistant."
     indent = "\n".join("      " + ln for ln in persona.splitlines())
-    head = "# wb-armor overlay: 顶层数组，元素为 loader patch 条目（id + config）\n"
+    head = "# >>> wb-armor overlay (managed block; safe to delete)\n"
     if insert:
         head += "- insert:\n    - id: dsh-infinite-gen-5\n      name: 'dsh-infinite-gen-5'\n\n"
     return head + (
@@ -279,22 +281,8 @@ def _dsh_yaml(armor: bool = True, insert: bool = False) -> str:
         + indent + "\n"
         "      \n"
         "      << armor canary: %s >>\n" % CANARY
+        + "# <<< wb-armor overlay\n"
     )
-
-
-def _ensure_dsh_key() -> str:
-    """DSH 的 llm-deepseek 走 provider 路由时必须能取到 DEEPSEEK_API_KEY。
-    桥不校验值，任意非空即可；已存在则不动（避免覆盖真实 key）。"""
-    cur = os.environ.get("DEEPSEEK_API_KEY", "")
-    if cur:
-        return "DEEPSEEK_API_KEY: already set (%s...), kept" % cur[:6]
-    ps = ("[Environment]::SetEnvironmentVariable('DEEPSEEK_API_KEY','sk-local-ig5','User');"
-          "[Environment]::GetEnvironmentVariable('DEEPSEEK_API_KEY','User')")
-    r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True)
-    os.environ["DEEPSEEK_API_KEY"] = "sk-local-ig5"
-    if r.returncode == 0:
-        return "DEEPSEEK_API_KEY: set to sk-local-ig5 (User scope, needs new process)"
-    return "DEEPSEEK_API_KEY: set for this process only (User scope write failed)"
 
 
 def _prune_dsh_bundles(profile_dir: Path) -> str:
@@ -314,35 +302,70 @@ def _prune_dsh_bundles(profile_dir: Path) -> str:
         (keep if ok else drop).append(b)
     if not drop:
         return ""
+    data["dsh"]["profile"]["bundles"] = keep
     pkg.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return "pruned bundles: %s" % ", ".join(drop)
 
 
+DSH_PROFILE_NAMES = ["web", "desktop", "tauri"]
+
+
+def _strip_our_block(text: str) -> str:
+    """剥掉本工具写过的全部 block：旧版只有头注释、新版成对标记、且可能叠了多段。"""
+    b = text.find("# wb-armor overlay:")
+    if b >= 0:  # 旧版：从旧头剥到下一个新标记或 EOF
+        nxt = text.find("# >>> wb-armor overlay", b + 1)
+        text = text[:b] + (text[nxt:] if nxt > b else "")
+    while True:  # 新版：成对剥离，重复段一次清完
+        b = text.find("# >>> wb-armor overlay")
+        e = text.find("# <<< wb-armor overlay", b) if b >= 0 else -1
+        if b < 0 or e < 0:
+            break
+        text = text[:b] + text[e + len("# <<< wb-armor overlay"):]
+    return text.rstrip() + "\n"
+
+
+def _ensure_dsh_key() -> str:
+    """DSH 的 llm-deepseek 走 provider 路由时必须能取到 DEEPSEEK_API_KEY。
+    桥不校验值，任意非空即可；已存在则不动（避免覆盖真实 key）。"""
+    cur = os.environ.get("DEEPSEEK_API_KEY", "")
+    if cur:
+        return "DEEPSEEK_API_KEY: already set (%s...), kept" % cur[:6]
+    ps = ("[Environment]::SetEnvironmentVariable('DEEPSEEK_API_KEY','sk-local-ig5','User');"
+          "[Environment]::GetEnvironmentVariable('DEEPSEEK_API_KEY','User')")
+    r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True)
+    os.environ["DEEPSEEK_API_KEY"] = "sk-local-ig5"
+    if r.returncode == 0:
+        return "DEEPSEEK_API_KEY: set to sk-local-ig5 (User scope, needs new process)"
+    return "DEEPSEEK_API_KEY: set for this process only (User scope write failed)"
+
+
+DSH_PATCH = ROOT / "config" / "dsh-wb.patch.yml"
+
+
 def deploy_dsh(headless: bool = False, dry: bool = False) -> list[str]:
+    """只生成仓库内的 patch 覆盖层，不再写 ~/.dsh/profiles。
+
+    desktop 归 Electron 独占（`dsh --profile desktop` 被 CLI 直接拒绝），手改 profile
+    既无效又会在换机后留下重复条目；统一用 `dsh --profile <x> --patch config/dsh-wb.patch.yml`。
+    headless 参数保留只为 CLI 兼容。
+    """
     out: list[str] = []
-    targets = [DSH_WEB] + ([DSH_HEADLESS] if headless else [DSH_WEB])
-    seen = set()
-    for t in targets:
-        if t in seen:
-            continue
-        seen.add(t)
-        t.parent.mkdir(parents=True, exist_ok=True)
-        if t.exists():
-            bak = t.with_suffix(".yml.bak")
-            bak.write_text(t.read_text(encoding="utf-8"), encoding="utf-8")
-            out.append("backup %s" % bak.name)
-        insert_ok = (t == DSH_WEB) and (t.parent / "node_modules" / "dsh-infinite-gen-5").exists()
-        body = _dsh_yaml(armor=True, insert=insert_ok)
-        if not dry:
-            t.write_text(body, encoding="utf-8")
-        out.append("%s %s (array schema, canary=%s)" % ("wrote" if not dry else "would write", t, CANARY in body))
-        if not dry:
-            pruned = _prune_dsh_bundles(t.parent)
-            if pruned:
-                out.append(pruned)
+    insert_ok = (HOME / ".dsh" / "profiles" / "web" / "node_modules" / "dsh-infinite-gen-5").exists()
+    body = _dsh_yaml(armor=True, insert=insert_ok)
+    if DSH_PATCH.exists():
+        bak = DSH_PATCH.with_suffix(".yml.bak")
+        bak.write_text(DSH_PATCH.read_text(encoding="utf-8"), encoding="utf-8")
+        out.append("backup %s" % bak.name)
     if not dry:
+        DSH_PATCH.parent.mkdir(parents=True, exist_ok=True)
+        DSH_PATCH.write_text(body, encoding="utf-8")
         out.append(_ensure_dsh_key())
-    out.append("verify: dsh --profile headless \"say OK\"   (期望首行含 ⟨armor:%s⟩)" % CANARY)
+    rel = DSH_PATCH.relative_to(ROOT)
+    out.append("%s %s (canary=%s, insert=%s)" % ("wrote" if not dry else "would write", rel, CANARY in body, insert_ok))
+    out.append("use: dsh --profile web --patch %s" % rel)
+    out.append("use: dsh --profile headless --patch %s \"say OK\"" % rel)
+    out.append("verify: dsh --profile web --patch %s --dump-config   (期望含 << armor canary: %s >>)" % (rel, CANARY))
     return out
 
 
@@ -396,7 +419,7 @@ def stop_all() -> tuple[bool, str]:
     for name in TASKS:
         subprocess.run(["schtasks", "/End", "/TN", name], capture_output=True, text=True)
     lines.append("schtasks /End x%d" % len(TASKS))
-    for p in PORTS:
+    for p in list(PORTS) + [p for p in OPTIONAL_PORTS if port_up(int(p))]:
         msg = _kill_port(int(p))
         if msg:
             lines.append(msg)
@@ -416,25 +439,52 @@ def schtasks_running(name: str) -> bool:
 
 def status() -> dict:
     st = {p: port_up(int(p)) for p in PORTS}
+    st_optional = {p: port_up(int(p)) for p in OPTIONAL_PORTS}
     health = {}
     try:
         health = http_json(BRIDGE + "/health", timeout=4)
     except Exception:
         health = {}
-    return {"ports": st, "health": health, "model": default_model()}
+    return {"ports": st, "optional_ports": st_optional, "health": health, "model": default_model()}
 
 
 # ---------------------------------------------------------------- launcher
-def open_client(which: str) -> list[str]:
+def open_client(which: str, profile: str = "") -> list[str]:
     if which == "codex":
         p = _ps(str(ROOT / "scripts" / "open-codex.ps1"))
         return [(p.stdout or "").strip()] if p.returncode == 0 else ["codex launch failed: " + (p.stderr or "").strip()]
     if which == "dsh":
-        subprocess.Popen(["cmd", "/c", "start", "", "dsh", "--profile", "web"], cwd=str(ROOT))
-        return ["dsh --profile web"]
+        prof = profile or os.environ.get("DSH_PROFILE") or "web"
+        if prof == "desktop":
+            # desktop 归 Electron 独占，CLI 拒 boot，只能拉应用本体
+            exe = HOME / "AppData" / "Local" / "Programs" / "DeepSeek Harness" / "DeepSeek Harness.exe"
+            if not exe.exists():
+                return ["desktop 应用未安装: %s" % exe]
+            subprocess.Popen([str(exe)])
+            return ["launched %s" % exe]
+        args = ["cmd", "/c", "start", "", "dsh", "--profile", prof]
+        if DSH_PATCH.exists():
+            args += ["--patch", str(DSH_PATCH)]
+        subprocess.Popen(args, cwd=str(ROOT))
+        return ["dsh --profile %s%s" % (prof, " --patch config/dsh-wb.patch.yml" if DSH_PATCH.exists() else "")]
     return ["unknown client: " + which]
+
+
 # ---------------------------------------------------------------- armor (patch/restore/verify)
-TEMPLATES = Path(r"C:\Program Files\WorkBuddyAI\resources\app.asar.unpacked\resources\templates")
+def _templates() -> Path | None:
+    """WorkBuddy 安装位置因机而异：依次探测，找不到就返回 None（armor 命令据此给提示）。"""
+    cands = [
+        Path(os.environ.get("WORKBUDDY_HOME", "")) / "resources/app.asar.unpacked/resources/templates" if os.environ.get("WORKBUDDY_HOME") else None,
+        Path(r"C:\Program Files\WorkBuddyAI\resources\app.asar.unpacked\resources\templates"),
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/WorkBuddyAI/resources/app.asar.unpacked/resources/templates" if os.environ.get("LOCALAPPDATA") else None,
+    ]
+    for c in cands:
+        if c and c.is_dir():
+            return c
+    return None
+
+
+TEMPLATES = _templates() or Path(r"C:\Program Files\WorkBuddyAI\resources\app.asar.unpacked\resources\templates")
 
 
 def _ps(script: str, *args: str) -> subprocess.CompletedProcess:

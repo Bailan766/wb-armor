@@ -9,7 +9,9 @@ WorkBuddy / CodeBuddy 本地反代 + 破甲 + 多源路由，供 Codex 与 DeepS
 cd "C:\Users\Administrator\Desktop\wb 一键破甲反代"
 python -m wbarmor start          # 8788 → 4097 → 8792 → 8790
 python -m wbarmor deploy-codex   # ~/.codex/config.toml + 绝对路径 catalog
-python -m wbarmor deploy-dsh     # ~/.dsh/profiles/web/cordis.patch.yml
+python -m wbarmor deploy-dsh     # 只写 config\dsh-wb.patch.yml，不碰 ~/.dsh/profiles
+dsh --profile web --patch .\config\dsh-wb.patch.yml   # 叠加破甲段与 8790 路由
+python -m wbarmor open dsh --profile desktop          # desktop 走 Electron 应用本体
 python -m wbarmor status
 ```
 
@@ -18,40 +20,36 @@ python -m wbarmor status
 ## 结构
 
 ```
-wbarmor\core.py     纯函数内核：会话/token、模型目录、Codex/DSH 部署、服务控制、破甲、载荷、日志、计划任务
-wbarmor\cli.py      python -m wbarmor <cmd>
-gui\app.py          Tk 控制台（18 个动作 + 模型列表 + 载荷选择 + 输出区）
-scripts\            start-all / supervisor / launch-app / bootstrap / patch-armor / verify / logs / fix-codex / open-codex / start-wb8788 / setup-dsh / build-release
+wbarmor\core.py     纯函数内核：token、模型目录、部署、服务控制、破甲、载荷、日志
+wbarmor\cli.py      python -m wbarmor（6 个高频命令 + adv 收纳其余）
+gui\app.py          Tk 控制台（5 个按钮 + 「更多」菜单）
+scripts\            start-all / supervisor / bootstrap / launch-app / open-codex / patch-armor / logs / start-wb8788
 lib\                log.mjs（Node JSONL）、wlog.ps1（PowerShell JSONL）
 src\                ig5-bridge.mjs（8790）、opencode-bridge.mjs（8792）
 gw\workbuddy2api\   反代源码（8788）
 vendor\             IG5 载荷（flash / full / lazy）
-config\             catalog 样本、DSH patch 样本
-dev\                doctor / repair / fix-window / start-proxy / push-via-api（排障用）
+config\             catalog 样本、dsh-wb.patch.yml（deploy-dsh 生成）
+attic\              归档：一次性 _patch_/_sync_ 脚本、旧 repair/fix-window/start-proxy
 ```
 
-## CLI 全命令
+## CLI（只记 6 个）
 
 | 命令 | 作用 |
 |---|---|
-| `status` | 四端口 + `/health` JSON |
-| `start` / `stop` | 起全链路 / 停（计划任务 + 按端口杀 owner） |
-| `token [--show] [--refresh]` | 会话摘要（token 掩码）、可刷新 |
-| `inject --token T` | 写回 `auth.deviceToken`（0600） |
-| `models [--set ID]` | 列出 / 设默认模型（写 `config.toml`） |
-| `deploy-codex` / `deploy-dsh [--headless]` | 客户端部署 |
-| `sync-catalog` | 从 8790 拉真实清单重写 catalog |
-| `probe` | 主链路 + 免费档各打一次并计时 |
-| `armor {status\|patch\|restore\|verify}` | 模板破甲状态 / 打补丁 / 回滚 / 校验 |
-| `payload [--set PATH]` | 查看 / 切换载荷 |
+| `status` | 三端口（8788/8790/8792）+ `/health`；可选 4097 单列 |
+| `start` / `stop` | 起/停全链路（`stop` 连可选的 4097 一起收） |
+| `deploy [all\|codex\|dsh]` | 生成 Codex config 与 `config\dsh-wb.patch.yml` |
+| `open codex\|dsh [--profile P]` | 启动客户端；`desktop` 走应用本体 |
 | `logs [--tail N] [--comp NAME]` | 合并查看 JSONL 日志 |
-| `tasks {status\|install\|remove}` | 计划任务维护 |
-| `open codex\|dsh` | 启动客户端 |
+
+其余低频动作（token / inject / models / armor / probe / payload / tasks / token-browser / sync-catalog）统一挂在 `python -m wbarmor adv <cmd>` 下，一级命令面不再增长。
+
+Codex 链路才需要的 4097：`$env:WB_CODEX=1; python -m wbarmor start`。
 
 ## 模型选择
 
-`gui/app.py` 右侧列表来自 8790 `/models`（失败回落 8792），双击即写 `config.toml` 的 `model`，
-当前默认项高亮。CLI 等价：`python -m wbarmor models --set deepseek-v4.1-flash-sg`。
+`gui/app.py` 右侧列表来自 8790 `/models`（失败回落 8792），双击写 `config.toml` 的 `model`。
+CLI 等价：`python -m wbarmor adv models --set deepseek-v4.1-flash-sg`。
 
 ## 日志
 

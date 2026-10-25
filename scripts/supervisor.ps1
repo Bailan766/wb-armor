@@ -1,4 +1,4 @@
-﻿function Q([string]$s) { if ($s -match '\s') { return '"' + $s + '"' } return $s }
+function Q([string]$s) { if ($s -match '\s') { return '"' + $s + '"' } return $s }
 # supervisor: ensure 8788 / 4097 / 8792 / 8790 are listening; start missing ones
 $Root = Split-Path -Parent $PSScriptRoot
 $GW = Join-Path $Root 'gw\workbuddy2api'
@@ -21,7 +21,8 @@ if (-not (Test-Port 8788) -and (Test-Path $Py)) {
   '{"ts":"' + (Get-Date).ToUniversalTime().ToString("o") + '","level":"warn","comp":"supervisor","msg":"start","svc":"8788"}' | Add-Content -Path $Log
 }
 
-if (-not (Test-Port 4097)) {
+# 4097 opencode serve 只有 Codex 链路要；默认不起，需要时 $env:WB_CODEX=1
+if ($env:WB_CODEX -eq '1' -and -not (Test-Port 4097)) {
   Start-Process -FilePath 'powershell' -WindowStyle Hidden -ArgumentList @('-NoProfile', '-Command', 'opencode serve --port 4097 --hostname 127.0.0.1')
   '{"ts":"' + (Get-Date).ToUniversalTime().ToString("o") + '","level":"warn","comp":"supervisor","msg":"start","svc":"4097"}' | Add-Content -Path $Log
   Start-Sleep -Seconds 5

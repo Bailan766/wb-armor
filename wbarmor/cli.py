@@ -161,66 +161,83 @@ def cmd_token_browser(a) -> int:
 
 
 def cmd_open(a) -> int:
-    for line in core.open_client(a.who):
+    for line in core.open_client(a.who, getattr(a, "profile", "") or ""):
         print(line)
     return 0
 
 
+def cmd_deploy(a) -> int:
+    what = getattr(a, "what", "all")
+    if what in ("all", "codex"):
+        for line in core.deploy_codex():
+            print(line)
+    if what in ("all", "dsh"):
+        for line in core.deploy_dsh(headless=getattr(a, "headless", False)):
+            print(line)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="wbarmor", description="wb-armor control CLI")
+    p = argparse.ArgumentParser(prog="wbarmor", description="wb-armor 控制台（高频 6 个命令 + adv 收纳其余）")
     sub = p.add_subparsers(dest="cmd", required=True)
 
+    # ---- 高频：日常只需要这 6 个
     sub.add_parser("status").set_defaults(fn=cmd_status)
     sub.add_parser("start").set_defaults(fn=cmd_start)
     sub.add_parser("stop").set_defaults(fn=cmd_stop)
 
-    t = sub.add_parser("token")
-    t.add_argument("--show", action="store_true")
-    t.add_argument("--refresh", action="store_true")
-    t.set_defaults(fn=cmd_token)
-
-    i = sub.add_parser("inject")
-    i.add_argument("--token", default="")
-    i.set_defaults(fn=cmd_inject)
-
-    m = sub.add_parser("models")
-    m.add_argument("--set", default="")
-    m.set_defaults(fn=cmd_models)
-
-    sub.add_parser("deploy-codex").set_defaults(fn=cmd_deploy_codex)
-    d = sub.add_parser("deploy-dsh")
+    d = sub.add_parser("deploy")
+    d.add_argument("what", nargs="?", default="all", choices=["all", "codex", "dsh"])
     d.add_argument("--headless", action="store_true")
-    d.set_defaults(fn=cmd_deploy_dsh)
+    d.set_defaults(fn=cmd_deploy)
 
-    ar = sub.add_parser("armor")
-    ar.add_argument("action", choices=["status", "patch", "restore", "verify"], nargs="?", default="status")
-    ar.set_defaults(fn=cmd_armor)
-
-    sub.add_parser("sync-catalog").set_defaults(fn=cmd_sync_catalog)
-    sub.add_parser("probe").set_defaults(fn=cmd_probe)
-
-    pl = sub.add_parser("payload")
-    pl.add_argument("--set", default="")
-    pl.add_argument("--bundled", action="store_true")
-    pl.set_defaults(fn=cmd_payload)
+    o = sub.add_parser("open")
+    o.add_argument("who", choices=["codex", "dsh"])
+    o.add_argument("--profile", default="", help="web / headless / tauri / desktop（desktop 走应用本体）")
+    o.set_defaults(fn=cmd_open)
 
     lg = sub.add_parser("logs")
     lg.add_argument("--tail", type=int, default=40)
     lg.add_argument("--comp", default="")
     lg.set_defaults(fn=cmd_logs)
 
-    tk = sub.add_parser("tasks")
+    # ---- 低频：全部收进 adv，一级命令面不再膨胀
+    adv = sub.add_parser("adv", help="低频维护命令")
+    asub = adv.add_subparsers(dest="adv_cmd", required=True)
+
+    t = asub.add_parser("token")
+    t.add_argument("--show", action="store_true")
+    t.add_argument("--refresh", action="store_true")
+    t.set_defaults(fn=cmd_token)
+
+    i = asub.add_parser("inject")
+    i.add_argument("--token", default="")
+    i.set_defaults(fn=cmd_inject)
+
+    m = asub.add_parser("models")
+    m.add_argument("--set", default="")
+    m.set_defaults(fn=cmd_models)
+
+    ar = asub.add_parser("armor")
+    ar.add_argument("action", choices=["status", "patch", "restore", "verify"], nargs="?", default="status")
+    ar.set_defaults(fn=cmd_armor)
+
+    asub.add_parser("sync-catalog").set_defaults(fn=cmd_sync_catalog)
+    asub.add_parser("probe").set_defaults(fn=cmd_probe)
+
+    pl = asub.add_parser("payload")
+    pl.add_argument("--set", default="")
+    pl.add_argument("--bundled", action="store_true")
+    pl.set_defaults(fn=cmd_payload)
+
+    tk = asub.add_parser("tasks")
     tk.add_argument("action", choices=["status", "install", "remove"], nargs="?", default="status")
     tk.set_defaults(fn=cmd_tasks)
 
-    tb = sub.add_parser("token-browser")
+    tb = asub.add_parser("token-browser")
     tb.add_argument("--capture", action="store_true")
     tb.add_argument("--inject", action="store_true")
     tb.set_defaults(fn=cmd_token_browser)
-
-    o = sub.add_parser("open")
-    o.add_argument("who", choices=["codex", "dsh"])
-    o.set_defaults(fn=cmd_open)
     return p
 
 

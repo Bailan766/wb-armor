@@ -42,46 +42,40 @@ class App(tk.Tk):
         top = ttk.Frame(self, padding=(10, 8))
         top.pack(fill="x")
 
-        # row 1: lifecycle + clients
+        # row 1: 只留 5 个高频动作，其余全部收进「更多」菜单
         r1 = ttk.Frame(top)
         r1.pack(fill="x", pady=2)
         for text, w, cmd in (
-            ("▶ 一键启动", 13, self.do_start),
-            ("■ 停止全部", 11, self.do_stop),
-            ("⟳ 刷新状态", 11, self.refresh_status),
-            ("打开 Codex", 11, lambda: self.bg(core.open_client, "codex")),
+            ("▶ 启动", 10, self.do_start),
+            ("■ 停止", 10, self.do_stop),
+            ("刷新", 8, self.refresh_status),
             ("打开 DSH", 10, lambda: self.bg(core.open_client, "dsh")),
-            ("打开日志", 10, self.open_logs),
+            ("日志", 8, self.open_logs),
         ):
             ttk.Button(r1, text=text, width=w, command=cmd).pack(side="left", padx=3)
 
-        # row 2: token + deploy
-        r2 = ttk.Frame(top)
-        r2.pack(fill="x", pady=2)
-        for text, w, cmd in (
-            ("① 提 Token", 12, self.do_token),
-            ("↻ 刷新 Token", 12, self.do_refresh_token),
-            ("② 注入 Token", 12, self.do_inject),
-            ("浏览器登录", 11, self.do_browser_login),
-            ("抓取并注入", 11, self.do_capture_token),
-            ("③ 部署 Codex", 13, lambda: self.bg(core.deploy_codex)),
-            ("④ 部署 DSH", 12, lambda: self.bg(core.deploy_dsh)),
-            ("同步模型目录", 13, self.do_sync_catalog),
-        ):
-            ttk.Button(r2, text=text, width=w, command=cmd).pack(side="left", padx=3)
-
-        # row 3: armor + probe
-        r3 = ttk.Frame(top)
-        r3.pack(fill="x", pady=2)
-        for text, w, cmd in (
-            ("破甲 Patch", 11, lambda: self.bg(core.armor_patch)),
-            ("破甲 恢复", 11, lambda: self.bg(core.armor_restore)),
-            ("破甲 校验", 11, lambda: self.bg(core.armor_verify)),
-            ("破甲 状态", 11, lambda: self.bg(core.armor_status)),
-            ("探活 (8780/8792)", 15, lambda: self.bg(core.probe)),
-            ("计划任务", 10, lambda: self.bg(core.tasks_status)),
-        ):
-            ttk.Button(r3, text=text, width=w, command=cmd).pack(side="left", padx=3)
+        mb = ttk.Menubutton(r1, text="更多 ▾", width=10)
+        m = tk.Menu(mb, tearoff=False)
+        m.add_command(label="部署 Codex", command=lambda: self.bg(core.deploy_codex))
+        m.add_command(label="部署 DSH（只生成 patch）", command=lambda: self.bg(core.deploy_dsh))
+        m.add_separator()
+        m.add_command(label="提 Token", command=self.do_token)
+        m.add_command(label="刷新 Token", command=self.do_refresh_token)
+        m.add_command(label="注入 Token", command=self.do_inject)
+        m.add_command(label="浏览器登录", command=self.do_browser_login)
+        m.add_command(label="抓取并注入", command=self.do_capture_token)
+        m.add_separator()
+        m.add_command(label="破甲 状态", command=lambda: self.bg(core.armor_status))
+        m.add_command(label="破甲 校验", command=lambda: self.bg(core.armor_verify))
+        m.add_command(label="破甲 Patch", command=lambda: self.bg(core.armor_patch))
+        m.add_command(label="破甲 恢复", command=lambda: self.bg(core.armor_restore))
+        m.add_separator()
+        m.add_command(label="打开 Codex", command=lambda: self.bg(core.open_client, "codex"))
+        m.add_command(label="同步模型目录", command=self.do_sync_catalog)
+        m.add_command(label="探活", command=lambda: self.bg(core.probe))
+        m.add_command(label="计划任务", command=lambda: self.bg(core.tasks_status))
+        mb["menu"] = m
+        mb.pack(side="left", padx=6)
 
         # token entry
         tok = ttk.Frame(top)
