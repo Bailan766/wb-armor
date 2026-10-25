@@ -28,15 +28,32 @@ async function json(path) {
   return r.json();
 }
 
+async function openTarget(url) {
+  for (const method of ['PUT', 'GET']) {
+    try {
+      const r = await fetch(BASE + '/json/new?' + encodeURIComponent(url), { method });
+      if (r.ok) {
+        const j = await r.json().catch(() => null);
+        if (j && j.webSocketDebuggerUrl) return j;
+      }
+    } catch { }
+  }
+  return null;
+}
+
 async function ensurePage() {
   const list = await json('/json/list').catch(() => []);
   const pages = (Array.isArray(list) ? list : []).filter((t) => t.type === 'page' && t.webSocketDebuggerUrl);
-  const hit = pages.find((t) => /workbuddy|codebuddy/i.test(t.url)) || pages[0];
+  const real = pages.filter((t) => t.url && t.url !== 'about:blank');
+  const hit = real.find((t) => /workbuddy|codebuddy|\/login/i.test(t.url)) || real[0];
   if (hit) return hit;
-  const target = process.env.CDP_URL || 'https://www.workbuddy.ai';
-  const created = await json('/json/new?' + encodeURIComponent(target)).catch(() => null);
-  if (created && created.webSocketDebuggerUrl) return created;
-  throw new Error('no page target (open a browser window first)');
+  const target = process.env.CDP_URL || 'https://www.workbuddy.ai/login?platform=workbuddy-ai';
+  const created = await openTarget(target);
+  if (created) {
+    await new Promise((r) => setTimeout(r, 1500));   // 等导航发起
+    return created;
+  }
+  throw new Error('no usable page target (only about:blank); open the login tab first');
 }
 
 function cdp(ws, id, method, params = {}) {

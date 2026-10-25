@@ -418,9 +418,10 @@ def armor_status() -> list[str]:
         except Exception as e:  # noqa: BLE001
             rows.append("%-40s unreadable: %s" % (f.name, e))
             continue
-        has_canary = CANARY in text
+        has_canary = CANARY in text or "ARMOR_OFF" in text
         has_policy = "<content_policy>" in text
-        state = "ARMOR-OFF" if (has_canary and not has_policy) else ("ORIGINAL" if has_policy else "NO-POLICY")
+        # patch-armor 的语义：保留 <content_policy> 标签但把内容换成 ARMOR_OFF 中性块
+        state = "ARMOR-OFF" if has_canary else ("ORIGINAL" if has_policy else "NO-POLICY")
         if state == "ARMOR-OFF":
             armed += 1
         rows.append("%-40s %-10s bytes=%d" % (f.name, state, len(text.encode("utf-8"))))
