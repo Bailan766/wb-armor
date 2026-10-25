@@ -27,3 +27,4 @@ Thumbs.db
 
 browser-profile/
 logs/
+.release-notes-*.md
