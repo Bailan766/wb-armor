@@ -297,6 +297,27 @@ def _ensure_dsh_key() -> str:
     return "DEEPSEEK_API_KEY: set for this process only (User scope write failed)"
 
 
+def _prune_dsh_bundles(profile_dir: Path) -> str:
+    """删掉 package.json 里无法解析的 bundle（例如 dsh-purge 未安装），
+    否则 DSH 启动时会一直 warning，看起来像"部署没生效"。"""
+    pkg = profile_dir / "package.json"
+    if not pkg.exists():
+        return ""
+    try:
+        data = json.loads(pkg.read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        return "package.json unreadable: %s" % e
+    bundles = data.get("dsh", {}).get("profile", {}).get("bundles") or []
+    keep, drop = [], []
+    for b in bundles:
+        ok = b.startswith("@deepseek-ai/") or (profile_dir / "node_modules" / b).exists()
+        (keep if ok else drop).append(b)
+    if not drop:
+        return ""
+    pkg.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return "pruned bundles: %s" % ", ".join(drop)
+
+
 def deploy_dsh(headless: bool = False, dry: bool = False) -> list[str]:
     out: list[str] = []
     targets = [DSH_WEB] + ([DSH_HEADLESS] if headless else [DSH_WEB])
@@ -315,6 +336,10 @@ def deploy_dsh(headless: bool = False, dry: bool = False) -> list[str]:
         if not dry:
             t.write_text(body, encoding="utf-8")
         out.append("%s %s (array schema, canary=%s)" % ("wrote" if not dry else "would write", t, CANARY in body))
+        if not dry:
+            pruned = _prune_dsh_bundles(t.parent)
+            if pruned:
+                out.append(pruned)
     if not dry:
         out.append(_ensure_dsh_key())
     out.append("verify: dsh --profile headless \"say OK\"   (期望首行含 ⟨armor:%s⟩)" % CANARY)
