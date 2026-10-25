@@ -38,11 +38,15 @@ try {
   }
 } catch { }
 const dbg = (s) => { if (DBG()) fs.appendFileSync(DBG_LOG, s); };
-const STATS = { served: 0, fallbacks: 0, lastModel: null, lastStatus: 0 };
+const STATS = { served: 0, fallbacks: 0, lastModel: null, lastStatus: 0, routes: { responses: 0, chat: 0, messages: 0 } };
 const note = (req, code) => {
-  LOG.push(`${new Date().toISOString()} ${req.method} ${req.url} -> ${code}`);
+  const url = String((req && req.url) || '');
+  LOG.push(`${new Date().toISOString()} ${req.method} ${url} -> ${code}`);
   if (LOG.length > 200) LOG.shift();
-  if (req && String(req.url || '').includes('/responses')) STATS.lastStatus = code;
+  const post = req && req.method === 'POST';
+  if (post && url.includes('/responses')) { STATS.routes.responses += 1; STATS.lastStatus = code; }
+  else if (post && url.includes('/chat/completions')) STATS.routes.chat += 1;
+  else if (post && url.includes('/messages')) STATS.routes.messages += 1;
 };
 const json = (res, code, obj, req) => { const b = JSON.stringify(obj); res.writeHead(code, { ...CORS, 'content-type': 'application/json', 'content-length': Buffer.byteLength(b) }); res.end(b); if (req) note(req, code); };
 const readBody = async (req) => { const c = []; for await (const x of req) c.push(x); return Buffer.concat(c).toString('utf8'); };
@@ -74,7 +78,7 @@ const server = http.createServer(async (req, res) => {
       ok: true, upstream: UP, payload_chars: PAYLOAD.length,
       payload_source: process.env.IG5_PAYLOAD ? 'env' : (PAYLOAD_PATH.includes('vendor') ? 'bundled' : 'file'),
       payload_path: PAYLOAD_PATH,
-      served: STATS.served, fallbacks: STATS.fallbacks,
+      served: STATS.served, fallbacks: STATS.fallbacks, served_by_route: STATS.routes,
       last_model: STATS.lastModel, last_status: STATS.lastStatus,
       recent: LOG.slice(-10)
     }, req);
