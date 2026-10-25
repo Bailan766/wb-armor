@@ -249,44 +249,75 @@ def ensure_catalog_armor() -> str:
 
 
 # ---------------------------------------------------------------- deploy: dsh
-def _dsh_yaml(armor: bool) -> str:
-    payload = ROOT / "vendor" / "dsh-infinite-gen-5" / "infinite-gen-5.1-flash.md"
-    if not payload.exists():
-        payload = ROOT / "vendor" / "dsh-infinite-gen-5" / "infinite-gen-5.full.md"
-    body = payload.read_text(encoding="utf-8") if payload.exists() else ""
-    sys_prompt = (ARMOR_OFF_TEXT + "\n\n" + body) if armor else "You are a helpful assistant."
-    return (
-        "# wb-armor: point DSH at the local bridge\n"
-        "plugins:\n"
-        "  llm-deepseek:\n"
+def _dsh_yaml(armor: bool = True, insert: bool = False) -> str:
+    """DSH patch 层必须是「顶层 YAML 数组 + id/config 条目」；写成 mapping 会直接报
+    `must be a top-level YAML array of loader patch entries`，整个 profile 起不来。"""
+    persona = ARMOR_OFF_TEXT if armor else "You are a helpful assistant."
+    indent = "\n".join("      " + ln for ln in persona.splitlines())
+    head = "# wb-armor overlay: 顶层数组，元素为 loader patch 条目（id + config）\n"
+    if insert:
+        head += "- insert:\n    - id: dsh-infinite-gen-5\n      name: 'dsh-infinite-gen-5'\n\n"
+    return head + (
+        "- id: agent-default-model\n"
+        "  config:\n"
+        "    provider: deepseek-official\n"
+        "    model: deepseek-v4.1-flash\n"
+        "\n"
+        "- id: llm-deepseek\n"
+        "  config:\n"
         "    baseURL: http://127.0.0.1:8790/v1\n"
         "    apiKey: sk-local-ig5\n"
         "    models:\n"
-        "      - deepseek-v4.1-flash\n"
-        "      - deepseek-v4.1-flash-sg\n"
-        "      - deepseek-v4-flash\n"
-        "  agent-default-model:\n"
-        "    provider: llm-deepseek\n"
-        "    model: deepseek-v4.1-flash\n"
-        "  system-prompt:\n"
-        "    content: |\n"
-        + "".join("      " + ln + "\n" for ln in sys_prompt.splitlines()[:400])
-        + "\n# canary: %s\n" % CANARY
+        "      - id: deepseek-v4.1-flash\n"
+        "        name: DeepSeek-V4.1-Flash (wb-armor bridge)\n"
+        "        contextWindow: 1000000\n"
+        "        inputModalities: [text]\n"
+        "\n"
+        "- id: system-prompt\n"
+        "  config:\n"
+        "    personaPrefix: |-\n"
+        + indent + "\n"
+        "      \n"
+        "      << armor canary: %s >>\n" % CANARY
     )
+
+
+def _ensure_dsh_key() -> str:
+    """DSH 的 llm-deepseek 走 provider 路由时必须能取到 DEEPSEEK_API_KEY。
+    桥不校验值，任意非空即可；已存在则不动（避免覆盖真实 key）。"""
+    cur = os.environ.get("DEEPSEEK_API_KEY", "")
+    if cur:
+        return "DEEPSEEK_API_KEY: already set (%s...), kept" % cur[:6]
+    ps = ("[Environment]::SetEnvironmentVariable('DEEPSEEK_API_KEY','sk-local-ig5','User');"
+          "[Environment]::GetEnvironmentVariable('DEEPSEEK_API_KEY','User')")
+    r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True)
+    os.environ["DEEPSEEK_API_KEY"] = "sk-local-ig5"
+    if r.returncode == 0:
+        return "DEEPSEEK_API_KEY: set to sk-local-ig5 (User scope, needs new process)"
+    return "DEEPSEEK_API_KEY: set for this process only (User scope write failed)"
 
 
 def deploy_dsh(headless: bool = False, dry: bool = False) -> list[str]:
     out: list[str] = []
-    targets = [DSH_WEB] + ([DSH_HEADLESS] if headless else [])
+    targets = [DSH_WEB] + ([DSH_HEADLESS] if headless else [DSH_WEB])
+    seen = set()
     for t in targets:
+        if t in seen:
+            continue
+        seen.add(t)
         t.parent.mkdir(parents=True, exist_ok=True)
         if t.exists():
             bak = t.with_suffix(".yml.bak")
             bak.write_text(t.read_text(encoding="utf-8"), encoding="utf-8")
             out.append("backup %s" % bak.name)
+        insert_ok = (t == DSH_WEB) and (t.parent / "node_modules" / "dsh-infinite-gen-5").exists()
+        body = _dsh_yaml(armor=True, insert=insert_ok)
         if not dry:
-            t.write_text(_dsh_yaml(armor=True), encoding="utf-8")
-        out.append("wrote %s (canary=%s)" % (t, CANARY in _dsh_yaml(True)))
+            t.write_text(body, encoding="utf-8")
+        out.append("%s %s (array schema, canary=%s)" % ("wrote" if not dry else "would write", t, CANARY in body))
+    if not dry:
+        out.append(_ensure_dsh_key())
+    out.append("verify: dsh --profile headless \"say OK\"   (期望首行含 ⟨armor:%s⟩)" % CANARY)
     return out
 
 
